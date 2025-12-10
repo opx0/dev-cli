@@ -1,11 +1,22 @@
-/*
-Copyright © 2025 NAME HERE <EMAIL ADDRESS>
-
-*/
 package main
 
-import "dev-cli/cmd"
+import (
+	"fmt"
+	"os"
+
+	"dev-cli/internal/tui"
+
+	tea "github.com/charmbracelet/bubbletea"
+)
 
 func main() {
-	cmd.Execute()
+	p := tea.NewProgram(
+		tui.InitialModel(),
+		tea.WithAltScreen(),
+	)
+
+	if _, err := p.Run(); err != nil {
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
+	}
 }
