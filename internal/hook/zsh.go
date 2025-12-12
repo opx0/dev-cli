@@ -84,16 +84,13 @@ dcap() {
         --exit-code "$exit_code" \
         --cwd "$PWD" \
         --duration-ms "$duration" \
-        --output "$output" 2>/dev/null &!
+        --output "$output" 2>/dev/null
     
     rm -f "$tmpfile"
     
-    # On failure (excluding Ctrl-C = 130), run RCA with captured output
+    # On failure (excluding Ctrl-C = 130), run RCA from log
     if [[ $exit_code -ne 0 && $exit_code -ne 130 ]]; then
-        dev-cli rca --interactive \
-            --command "$*" \
-            --exit-code "$exit_code" \
-            --output "$output" 2>/dev/null
+        dev-cli rca --last 1 --interactive 2>/dev/null
     fi
     
     return $exit_code

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -82,4 +83,73 @@ func (l *Logger) LogEvent(command string, exitCode int, cwd string, durationMs i
 	}
 
 	return nil
+}
+
+// QueryOpts - options for querying log entries
+type QueryOpts struct {
+	Limit  int           // Max entries to return (0 = no limit)
+	Filter string        // Command keyword filter
+	Since  time.Duration // Time window (0 = no time filter)
+}
+
+// GetFailures - query failed commands from log with filters
+func (l *Logger) GetFailures(opts QueryOpts) ([]LogEntry, error) {
+	data, err := os.ReadFile(l.logPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil // No log file yet
+		}
+		return nil, fmt.Errorf("failed to read log: %w", err)
+	}
+
+	var entries []LogEntry
+	lines := strings.Split(string(data), "\n")
+
+	// Parse all entries (newest last in file)
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		var entry LogEntry
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			continue // Skip malformed entries
+		}
+
+		// Only failures (exit_code != 0)
+		if entry.ExitCode == 0 {
+			continue
+		}
+
+		// Apply keyword filter
+		if opts.Filter != "" && !strings.Contains(strings.ToLower(entry.Command), strings.ToLower(opts.Filter)) {
+			continue
+		}
+
+		// Apply time filter
+		if opts.Since > 0 {
+			ts, err := time.Parse(time.RFC3339, entry.Timestamp)
+			if err != nil {
+				continue
+			}
+			if time.Since(ts) > opts.Since {
+				continue
+			}
+		}
+
+		entries = append(entries, entry)
+	}
+
+	// Reverse to get newest first
+	for i, j := 0, len(entries)-1; i < j; i, j = i+1, j-1 {
+		entries[i], entries[j] = entries[j], entries[i]
+	}
+
+	// Apply limit
+	if opts.Limit > 0 && len(entries) > opts.Limit {
+		entries = entries[:opts.Limit]
+	}
+
+	return entries, nil
 }
