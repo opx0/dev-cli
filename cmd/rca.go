@@ -99,19 +99,19 @@ func analyzeFromLog(limit int, filterStr, sinceStr string, interactive bool) {
 }
 
 func analyzeEntry(entry logger.LogEntry, interactive bool) {
-	fmt.Printf("\n❌ %s (exit %d)\n", entry.Command, entry.ExitCode)
+	fmt.Printf("\n\033[31m×\033[0m %s \033[90m(exit %d)\033[0m\n", entry.Command, entry.ExitCode)
 
 	client := llm.NewClient()
 	result, err := client.Explain(entry.Command, entry.ExitCode, entry.Output)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "⚠️  Analysis failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "\033[33m⚠\033[0m Analysis failed: %v\n", err)
 		return
 	}
 
-	fmt.Printf("💡 %s\n", result.Explanation)
+	fmt.Printf("  \033[90m→\033[0m %s\n", result.Explanation)
 
 	if result.Fix != "" {
-		fmt.Printf("📝 Fix: %s\n", result.Fix)
+		fmt.Printf("  \033[32m$\033[0m %s\n", result.Fix)
 
 		if interactive {
 			fmt.Print("   [Run Fix?] (y/n): ")
@@ -126,9 +126,9 @@ func analyzeEntry(entry logger.LogEntry, interactive bool) {
 				cmd.Stderr = os.Stderr
 				cmd.Stdin = os.Stdin
 				if err := cmd.Run(); err != nil {
-					fmt.Fprintf(os.Stderr, "   ⚠️  Fix failed: %v\n", err)
+					fmt.Fprintf(os.Stderr, "   \033[33m⚠\033[0m Fix failed: %v\n", err)
 				} else {
-					fmt.Println("   ✅ Fix applied")
+					fmt.Println("   \033[32m✓\033[0m Fix applied")
 				}
 			}
 		}

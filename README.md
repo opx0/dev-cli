@@ -4,10 +4,10 @@ AI-powered command-line error analysis tool. Captures failed commands and explai
 
 ## Features
 
-- 🔍 **Automatic error analysis** - Explains why commands failed
-- 📝 **Fix suggestions** - Suggests commands to fix the issue
-- 📊 **Command history** - Logs all commands with exit codes and output
-- 🔎 **Query failures** - Filter by keyword, time range, or count
+- **×** Automatic error analysis - Explains why commands failed
+- **$** Fix suggestions - Suggests executable commands to fix issues
+- **→** Command history - Logs all commands with exit codes and output
+- **⚠** Query failures - Filter by keyword, time range, or count
 
 ## Prerequisites
 
@@ -42,9 +42,9 @@ After installation, failed commands are automatically analyzed:
 $ npm install
 npm error: ENOENT: no such file or directory, package.json
 
-❌ npm install (exit 254)
-💡 Missing package.json in current directory
-📝 Fix: npm init -y
+× npm install (exit 254)
+  → Missing package.json
+  $ npm init -y
    [Run Fix?] (y/n):
 ```
 
@@ -86,6 +86,17 @@ When running with `--interactive`, you'll be prompted to run suggested fixes:
 dev-cli rca --last 1 --interactive
 ```
 
+## Output Format
+
+```
+× npm install (exit 254)     # Red × = failed command
+  → Missing package.json     # Gray → = explanation
+  $ npm init -y              # Green $ = fix command
+   [Run Fix?] (y/n): y
+   Running: npm init -y
+   ✓ Fix applied             # Green ✓ = success
+```
+
 ## Commands
 
 | Command             | Description                             |
@@ -95,6 +106,15 @@ dev-cli rca --last 1 --interactive
 | `dev-cli rca`       | Analyze failures from log               |
 | `dev-cli help`      | Show help                               |
 
+### RCA Flags
+
+| Flag                 | Description               | Example          |
+| -------------------- | ------------------------- | ---------------- |
+| `--last N`           | Analyze last N failures   | `--last 5`       |
+| `--filter "keyword"` | Filter by command keyword | `--filter "npm"` |
+| `--since "duration"` | Filter by time window     | `--since "1h"`   |
+| `--interactive`      | Enable fix prompts        | `--interactive`  |
+
 ## Configuration
 
 | Environment Variable   | Default                     | Description         |
@@ -102,6 +122,64 @@ dev-cli rca --last 1 --interactive
 | `DEV_CLI_LOG_DIR`      | `~/.devlogs`                | Log file directory  |
 | `DEV_CLI_OLLAMA_URL`   | `http://localhost:11434`    | Ollama API endpoint |
 | `DEV_CLI_OLLAMA_MODEL` | `qwen2.5-coder:3b-instruct` | LLM model to use    |
+
+## Use Cases
+
+### 1. Debug npm/Node.js Issues
+
+```bash
+$ dcap "npm install"
+× npm install (exit 254)
+  → Missing package.json
+  $ npm init -y
+```
+
+### 2. Fix Permission Errors
+
+```bash
+$ dcap "cat /etc/shadow"
+× cat /etc/shadow (exit 1)
+  → Permission denied
+  $ sudo cat /etc/shadow
+```
+
+### 3. Diagnose Git Problems
+
+```bash
+$ dcap "git push"
+× git push (exit 128)
+  → No configured push destination
+  $ git remote add origin <url>
+```
+
+### 4. Missing Commands
+
+```bash
+$ dcap "prisma migrate"
+× prisma (exit 127)
+  → prisma is not recognized
+  $ npm install -g prisma
+```
+
+### 5. Review Recent Failures
+
+```bash
+# What broke in the last hour?
+dev-cli rca --since "1h" --last 10
+
+# All npm issues today
+dev-cli rca --filter "npm" --since "24h"
+```
+
+### 6. CI/CD Integration
+
+```bash
+# In your CI script
+npm test || dev-cli log-event \
+    --command "npm test" \
+    --exit-code $? \
+    --output "$(cat test.log)"
+```
 
 ## Log Format
 

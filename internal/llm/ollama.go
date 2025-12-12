@@ -76,14 +76,25 @@ func (c *Client) Explain(cmd string, exitCode int, output string) (*ExplainResul
 		output = output[len(output)-2000:]
 	}
 
-	prompt := fmt.Sprintf(`You are a CLI helper. Analyze this failed command and respond ONLY with valid JSON:
-{"explanation": "1-sentence explanation of the error", "fix": "suggested fix command or empty string if no fix"}
+	prompt := fmt.Sprintf(`You are a CLI error analyzer. Analyze this failed command and respond with JSON only.
+
+RULES:
+1. "explanation" = Brief 1-sentence error cause
+2. "fix" = EXACT shell command to run (NOT advice, NOT instructions - just the command)
+   - Good fix: "npm init -y"
+   - Bad fix: "Make sure package.json exists"
+   - If no fix possible, use empty string ""
+
+EXAMPLES:
+- package.json missing → {"explanation": "Missing package.json", "fix": "npm init -y"}
+- permission denied → {"explanation": "Permission denied", "fix": "sudo !!"}
+- command not found → {"explanation": "Command not installed", "fix": ""}
 
 Command: %s
 Exit Code: %d
 Output: %s
 
-Respond with JSON only, no markdown, no explanation outside JSON.`, cmd, exitCode, output)
+JSON response:`, cmd, exitCode, output)
 
 	req := generateRequest{
 		Model:  c.model,
