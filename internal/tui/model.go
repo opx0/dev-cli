@@ -20,49 +20,43 @@ const (
 	StateMain
 )
 
-// New: Define Input Modes (Vim concept)
 type AppMode int
 
 const (
-	ModeNormal AppMode = iota // Navigation (j, k, 1, 2)
-	ModeInsert                // Typing (full keyboard input)
+	ModeNormal AppMode = iota
+	ModeInsert
 )
 
 type FocusPanel int
 
 const (
-	FocusContainers FocusPanel = iota
-	FocusObservability
+	FocusStatus FocusPanel = iota
 	FocusKeybinds
 	FocusTerminal
 )
 
 type Model struct {
 	state        SessionState
-	mode         AppMode // Track current mode
+	mode         AppMode
 	focus        FocusPanel
 	spinner      spinner.Model
 	input        textinput.Model
-	viewport     viewport.Model // Use Viewport for terminal history
+	viewport     viewport.Model
 	width        int
 	height       int
-	cwd          string // Current working directory
+	cwd          string
 	dockerHealth infra.DockerHealth
 	quitting     bool
-	err          error
 }
 
 type dockerHealthMsg struct {
 	health infra.DockerHealth
 }
 
-// Msg to display command output in viewport
 type commandOutputMsg string
 
-// Msg to handle errors from Exec
 type errMsg error
 
-// Msg to clear the viewport
 type clearViewportMsg struct{}
 
 func InitialModel() Model {
@@ -75,14 +69,14 @@ func InitialModel() Model {
 	ti.CharLimit = 256
 	ti.Width = 60
 
-	vp := viewport.New(0, 0) // Dimensions set in Update on resize
+	vp := viewport.New(0, 0)
 
 	cwd, _ := os.Getwd()
 
 	return Model{
 		state:    StateLoading,
-		mode:     ModeNormal, // Start in Normal mode
-		focus:    FocusContainers,
+		mode:     ModeNormal,
+		focus:    FocusStatus,
 		spinner:  s,
 		input:    ti,
 		viewport: vp,
