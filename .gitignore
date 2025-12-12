@@ -1,0 +1,14 @@
+# Binaries
+dev-cli
+*.exe
+
+# Test artifacts
+e2e/temp/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store

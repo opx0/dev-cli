@@ -1,79 +1,260 @@
-# Exit Codes Reference
+# Exit Codes Testing Guide
 
-Comprehensive list of exit codes for testing dev-cli failure detection.
+Quick reference for testing dev-cli failure detection with copy-paste commands.
 
 ---
 
 ## Universal Exit Codes
 
-| Code    | Meaning              | Trigger Examples                                                    |
-| ------- | -------------------- | ------------------------------------------------------------------- |
-| **0**   | Success              | `true`, `echo hello`, `ls /tmp`                                     |
-| **1**   | General error        | `false`, `grep notfound /etc/passwd`, `exit 1`                      |
-| **2**   | Misuse of command    | `ls --invalidflag`, `grep`, `cd ""`                                 |
-| **126** | Permission denied    | `./script.sh` (no +x), `/etc/shadow`, `touch /root/test`            |
-| **127** | Command not found    | `notarealcommand`, `npx nonexistent`, `./missing.sh`                |
-| **128** | Invalid exit code    | `exit -1`, `exit 999`, `exit abc`                                   |
-| **130** | Ctrl+C (SIGINT)      | `sleep 100` then Ctrl+C, `cat` then Ctrl+C, `npm start` then Ctrl+C |
-| **137** | Killed (SIGKILL/OOM) | `docker run --memory=10m stress`, `kill -9 $$`, memory-heavy script |
-| **139** | Segfault (SIGSEGV)   | Run a buggy C program, corrupted binary, `kill -11 $$`              |
-| **143** | Terminated (SIGTERM) | `kill <pid>`, `docker stop <container>`, `systemctl stop service`   |
+### Exit 0 - Success
+
+```bash
+true
+echo hello
+ls /tmp
+```
+
+### Exit 1 - General Error
+
+```bash
+false
+grep notfound /etc/passwd
+exit 1
+```
+
+### Exit 2 - Misuse of Command
+
+```bash
+ls --invalidflag
+grep
+cd ""
+```
+
+### Exit 126 - Permission Denied
+
+```bash
+touch /tmp/test.sh && chmod -x /tmp/test.sh && /tmp/test.sh
+cat /etc/shadow
+touch /root/test
+```
+
+### Exit 127 - Command Not Found
+
+```bash
+notarealcommand
+npx nonexistent
+./missing.sh
+```
+
+### Exit 130 - Ctrl+C (SIGINT)
+
+```bash
+sleep 100  # then press Ctrl+C
+cat        # then press Ctrl+C
+```
+
+### Exit 137 - Killed (OOM)
+
+```bash
+kill -9 $$
+```
+
+### Exit 143 - Terminated (SIGTERM)
+
+```bash
+sleep 100 &
+kill $!
+```
 
 ---
 
 ## npm / Node.js
 
-| Code       | Meaning          | Trigger Examples                                                                    |
-| ---------- | ---------------- | ----------------------------------------------------------------------------------- |
-| **1**      | Generic error    | `npm install nonexistent-pkg-xyz`, `node syntax_error.js`, `npm run missing-script` |
-| **ENOENT** | Missing file     | `npm install` (no package.json), `node missing.js`, `npx -p nonexistent`            |
-| **EACCES** | Permission issue | `npm install -g pkg` (no sudo), `node /root/app.js`, write to readonly              |
+### Exit 1 - Generic Error
+
+```bash
+npm install nonexistent-pkg-xyz
+node syntax_error.js
+npm run missing-script
+```
+
+### ENOENT - Missing File
+
+```bash
+cd /tmp && npm install  # no package.json
+node missing.js
+```
+
+### EACCES - Permission Issue
+
+```bash
+npm install -g some-package  # without sudo
+```
 
 ---
 
 ## Git
 
-| Code    | Meaning         | Trigger Examples                                                                    |
-| ------- | --------------- | ----------------------------------------------------------------------------------- |
-| **1**   | General failure | `git checkout nonexistent`, `git merge --abort` (no merge), `git diff` (no changes) |
-| **128** | Fatal error     | `git clone invalid://url`, `git push` (no remote), `git init /root/noperm`          |
-| **129** | Invalid options | `git --invalidflag`, `git commit -x`, `git log --badopt`                            |
+### Exit 1 - General Failure
+
+```bash
+git checkout nonexistent-branch
+git merge --abort  # when no merge in progress
+```
+
+### Exit 128 - Fatal Error
+
+```bash
+git clone invalid://url
+git push  # when no remote configured
+```
+
+### Exit 129 - Invalid Options
+
+```bash
+git --invalidflag
+git commit -x
+```
 
 ---
 
 ## Docker
 
-| Code    | Meaning         | Trigger Examples                                                                                 |
-| ------- | --------------- | ------------------------------------------------------------------------------------------------ |
-| **1**   | Container error | `docker run alpine exit 1`, `docker exec stopped_container ls`, `docker build .` (no Dockerfile) |
-| **125** | Daemon error    | `docker run --invalid-flag`, `docker run nonexistent:image`, daemon not running                  |
-| **137** | OOM killed      | `docker run --memory=5m node -e "a=[];while(1)a.push(1)"`, memory limit exceeded                 |
+### Exit 1 - Container Error
+
+```bash
+docker run alpine exit 1
+docker exec stopped_container ls
+docker build .  # no Dockerfile
+```
+
+### Exit 125 - Daemon Error
+
+```bash
+docker run --invalid-flag alpine
+docker run nonexistent:image
+```
+
+### Exit 137 - OOM Killed
+
+```bash
+docker run --memory=5m node -e "a=[];while(1)a.push(1)"
+```
 
 ---
 
 ## Python
 
-| Code  | Meaning   | Trigger Examples                                                        |
-| ----- | --------- | ----------------------------------------------------------------------- |
-| **1** | Exception | `python -c "raise Exception()"`, `python missing.py`, `python -c "1/0"` |
-| **2** | CLI error | `python --badflag`, `python -c`, `python -m nonexistent`                |
+### Exit 1 - Exception
+
+```bash
+python -c "raise Exception()"
+python missing.py
+python -c "1/0"
+```
+
+### Exit 2 - CLI Error
+
+```bash
+python --badflag
+python -c
+python -m nonexistent
+```
 
 ---
 
 ## Go
 
-| Code  | Meaning             | Trigger Examples                                                |
-| ----- | ------------------- | --------------------------------------------------------------- |
-| **1** | Build/runtime error | `go build broken.go`, `go run missing.go`, `go test` (failures) |
-| **2** | CLI misuse          | `go build --badflag`, `go`, `go invalidcmd`                     |
+### Exit 1 - Build/Runtime Error
+
+```bash
+go build broken.go
+go run missing.go
+go test  # with failing tests
+```
+
+### Exit 2 - CLI Misuse
+
+```bash
+go build --badflag
+go
+go invalidcmd
+```
 
 ---
 
 ## Prisma
 
-| Code  | Meaning       | Trigger Examples                                                                                         |
-| ----- | ------------- | -------------------------------------------------------------------------------------------------------- |
-| **1** | General error | `prisma migrate dev` (invalid schema), `prisma generate` (no schema), `prisma db push` (connection fail) |
+### Exit 1 - General Error
+
+```bash
+prisma migrate dev  # invalid schema
+prisma generate     # no schema
+prisma db push      # connection fail
+```
+
+---
+
+## dev-cli Current Capabilities
+
+### View Logs
+
+```bash
+# All commands
+cat ~/.devlogs/history.jsonl | jq
+
+# Only failures (exit_code != 0)
+cat ~/.devlogs/history.jsonl | jq 'select(.exit_code != 0)'
+
+# Last 5 commands
+tail -5 ~/.devlogs/history.jsonl | jq
+
+# Commands from specific directory
+cat ~/.devlogs/history.jsonl | jq 'select(.cwd == "/home/opx/Projects/dev-cli")'
+
+# Slow commands (>1000ms)
+cat ~/.devlogs/history.jsonl | jq 'select(.duration_ms > 1000)'
+
+# View command output (for LLM analysis)
+cat ~/.devlogs/history.jsonl | jq -r 'select(.output != "") | {cmd: .command, output: .output}'
+```
+
+### Manual Logging
+
+```bash
+# Without output
+dev-cli log-event --command "test" --exit-code 1 --cwd "/tmp" --duration-ms 500
+
+# With output (for LLM analysis)
+dev-cli log-event --command "npm install" --exit-code 1 --cwd "/tmp" --duration-ms 500 --output "Error: ENOENT: no such file"
+```
+
+### Capture Output with dcap Wrapper
+
+The hook provides a `dcap` function to capture command output:
+
+```bash
+# Use dcap prefix to capture output for any command
+dcap npm install
+dcap go build ./...
+dcap docker build .
+```
+
+### Get Hook Script
+
+```bash
+dev-cli hook zsh
+```
+
+### Install Hook
+
+```bash
+# Temporary (current session)
+eval "$(dev-cli hook zsh)"
+
+# Permanent (add to ~/.zshrc)
+echo 'eval "$(dev-cli hook zsh)"' >> ~/.zshrc
+```
 
 ---
 
@@ -81,23 +262,22 @@ Comprehensive list of exit codes for testing dev-cli failure detection.
 
 ```bash
 #!/bin/bash
-# test-exit-codes.sh - Run to test dev-cli failure detection
+# Run multiple exit codes and check logs
 
-echo "=== Testing Exit Codes ==="
+echo "=== Testing dev-cli ==="
 
-echo -n "true (expect 0): "
-true; echo $?
+true
+false
+ls --badflag 2>/dev/null
+notarealcmd 2>/dev/null
 
-echo -n "false (expect 1): "
-false; echo $?
-
-echo -n "bad flag (expect 2): "
-ls --badflag 2>/dev/null; echo $?
-
-echo -n "not found (expect 127): "
-notarealcmd 2>/dev/null; echo $?
-
-echo "=== Done ==="
+echo ""
+echo "=== Last 4 Log Entries ==="
+tail -4 ~/.devlogs/history.jsonl | jq -c '{cmd: .command, exit: .exit_code, ms: .duration_ms}'
 ```
 
-Run with: `chmod +x e2e/test-exit-codes.sh && ./e2e/test-exit-codes.sh`
+Save as `e2e/test-exit-codes.sh`, then:
+
+```bash
+chmod +x e2e/test-exit-codes.sh && ./e2e/test-exit-codes.sh
+```

@@ -14,6 +14,7 @@ func handleLogEvent() {
 	exitCode := fs.Int("exit-code", 0, "Exit code of the command")
 	cwd := fs.String("cwd", "", "Working directory")
 	durationMs := fs.Int64("duration-ms", 0, "Duration in milliseconds")
+	output := fs.String("output", "", "Command stdout/stderr output")
 
 	if err := fs.Parse(os.Args[2:]); err != nil {
 		fmt.Fprintf(os.Stderr, "Error parsing flags: %v\n", err)
@@ -30,7 +31,7 @@ func handleLogEvent() {
 		os.Exit(1)
 	}
 
-	if err := log.LogEvent(*command, *exitCode, *cwd, *durationMs); err != nil {
+	if err := log.LogEvent(*command, *exitCode, *cwd, *durationMs, *output); err != nil {
 		fmt.Fprintf(os.Stderr, "Log failed: %v\n", err)
 		os.Exit(1)
 	}
