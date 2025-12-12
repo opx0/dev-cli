@@ -51,9 +51,12 @@ __devops_precmd() {
         --cwd "$PWD" \
         --duration-ms "$duration_ms" 2>/dev/null &!
 
-    # Show failure indicator
-    if [[ $exit_code -ne 0 ]]; then
-        echo "!! dev-cli captured failure (exit $exit_code)"
+    # On failure (excluding Ctrl-C = 130), run RCA analysis
+    if [[ $exit_code -ne 0 && $exit_code -ne 130 ]]; then
+        dev-cli rca --interactive \
+            --command "$__DEVOPS_CMD" \
+            --exit-code "$exit_code" \
+            --output "" 2>/dev/null
     fi
 
     # Reset state
@@ -85,8 +88,12 @@ dcap() {
     
     rm -f "$tmpfile"
     
-    if [[ $exit_code -ne 0 ]]; then
-        echo "!! dev-cli captured failure (exit $exit_code)"
+    # On failure (excluding Ctrl-C = 130), run RCA with captured output
+    if [[ $exit_code -ne 0 && $exit_code -ne 130 ]]; then
+        dev-cli rca --interactive \
+            --command "$*" \
+            --exit-code "$exit_code" \
+            --output "$output" 2>/dev/null
     fi
     
     return $exit_code

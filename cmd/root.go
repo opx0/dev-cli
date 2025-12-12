@@ -17,6 +17,8 @@ func Execute() {
 		handleHook()
 	case "log-event":
 		handleLogEvent()
+	case "rca":
+		handleRCA()
 	case "help", "-h", "--help":
 		printUsage()
 	default:
@@ -35,6 +37,7 @@ Usage:
 Commands:
   hook zsh       Print the Zsh shell integration script
   log-event      Log a command execution event
+  rca            Analyze command failure with LLM
   help           Show this help message
 
 Shell Integration:
