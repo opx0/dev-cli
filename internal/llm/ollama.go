@@ -11,7 +11,6 @@ import (
 	"time"
 )
 
-// Default configuration
 const (
 	DefaultOllamaURL = "http://localhost:11434"
 	DefaultModel     = "qwen2.5-coder:3b-instruct"
@@ -19,22 +18,17 @@ const (
 	RequestTimeout   = 30 * time.Second
 )
 
-// ExplainResult contains the parsed LLM response
 type ExplainResult struct {
 	Explanation string `json:"explanation"`
 	Fix         string `json:"fix"`
 }
 
-// Client handles Ollama API communication
 type Client struct {
 	baseURL    string
 	model      string
 	httpClient *http.Client
 }
 
-// NewClient creates an Ollama client
-// Uses DEV_CLI_OLLAMA_URL env var if set, otherwise default
-// Uses DEV_CLI_OLLAMA_MODEL env var if set, otherwise qwen2.5-coder:3b-instruct
 func NewClient() *Client {
 	baseURL := DefaultOllamaURL
 	if envURL := os.Getenv("DEV_CLI_OLLAMA_URL"); envURL != "" {
@@ -55,7 +49,6 @@ func NewClient() *Client {
 	}
 }
 
-// generateRequest is the Ollama API request format
 type generateRequest struct {
 	Model  string `json:"model"`
 	Prompt string `json:"prompt"`
@@ -63,15 +56,12 @@ type generateRequest struct {
 	Format string `json:"format,omitempty"`
 }
 
-// generateResponse is the Ollama API response format
 type generateResponse struct {
 	Response string `json:"response"`
 	Done     bool   `json:"done"`
 }
 
-// Explain sends a prompt to Ollama and returns the explanation
 func (c *Client) Explain(cmd string, exitCode int, output string) (*ExplainResult, error) {
-	// Truncate output if too long
 	if len(output) > 2000 {
 		output = output[len(output)-2000:]
 	}
@@ -105,38 +95,29 @@ JSON response:`, cmd, exitCode, output)
 
 	reqBody, err := json.Marshal(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
+		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	resp, err := c.httpClient.Post(
-		c.baseURL+"/api/generate",
-		"application/json",
-		bytes.NewReader(reqBody),
-	)
+	resp, err := c.httpClient.Post(c.baseURL+"/api/generate", "application/json", bytes.NewReader(reqBody))
 	if err != nil {
-		return nil, fmt.Errorf("failed to call Ollama: %w", err)
+		return nil, fmt.Errorf("call Ollama: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("ollama returned status %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("ollama status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var genResp generateResponse
 	if err := json.NewDecoder(resp.Body).Decode(&genResp); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
+		return nil, fmt.Errorf("decode response: %w", err)
 	}
 
-	// Parse the JSON response from the LLM
 	var result ExplainResult
 	responseText := strings.TrimSpace(genResp.Response)
 	if err := json.Unmarshal([]byte(responseText), &result); err != nil {
-		// If JSON parsing fails, use raw response as explanation
-		return &ExplainResult{
-			Explanation: responseText,
-			Fix:         "",
-		}, nil
+		return &ExplainResult{Explanation: responseText, Fix: ""}, nil
 	}
 
 	return &result, nil
