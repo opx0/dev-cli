@@ -69,11 +69,11 @@ func (c *Client) Explain(cmd string, exitCode int, output string) (*ExplainResul
 	prompt := fmt.Sprintf(`You are a CLI error analyzer. Analyze this failed command and respond with JSON only.
 
 RULES:
-1. "explanation" = Brief 1-sentence error cause
+1. "explanation" = Brief 1-sentence error cause can attend for more precision only if needed.
 2. "fix" = EXACT shell command to run (NOT advice, NOT instructions - just the command)
-   - Good fix: "npm init -y"
+   - Good fix: "npm init -y new line and more command if needed to run in sequence"
    - Bad fix: "Make sure package.json exists"
-   - If no fix possible, use empty string ""
+   - If no fix possible, refer to sources more authetic to that problem to precise documentation etc ""
 
 EXAMPLES:
 - package.json missing → {"explanation": "Missing package.json", "fix": "npm init -y"}
