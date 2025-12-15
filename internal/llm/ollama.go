@@ -122,3 +122,69 @@ JSON response:`, cmd, exitCode, output)
 
 	return &result, nil
 }
+
+func (c *Client) Research(query string) (*ResearchResult, error) {
+	prompt := fmt.Sprintf(`You are a Senior Developer Assistant. The user needs to: "%s".
+Provide the TOP 3 distinct ways to achieve this.
+
+RULES:
+1. Option 1 = "Best Practice" / Modern way
+2. Option 2 = "Quickest/Easiest" way
+3. Option 3 = "Alternative" (edge case or manual approach)
+4. Each solution can have multiple steps
+5. Step type is "command" for shell commands, "file" for code snippets
+6. For "file" type, include the target filename in "file" field
+
+OUTPUT JSON ONLY:
+{
+  "solutions": [
+    {
+      "id": 1,
+      "title": "Using Docker (Recommended)",
+      "description": "Isolated environment",
+      "steps": [
+        {"type": "command", "content": "docker run -d postgres", "note": "Start container"}
+      ],
+      "source": ""
+    }
+  ]
+}`, query)
+
+	req := generateRequest{
+		Model:  c.model,
+		Prompt: prompt,
+		Stream: false,
+		Format: "json",
+	}
+
+	reqBody, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	resp, err := c.httpClient.Post(c.baseURL+"/api/generate", "application/json", bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, fmt.Errorf("call Ollama: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("ollama status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var genResp generateResponse
+	if err := json.NewDecoder(resp.Body).Decode(&genResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	responseText := strings.TrimSpace(genResp.Response)
+
+	var result ResearchResult
+	if err := json.Unmarshal([]byte(responseText), &result); err != nil {
+		return nil, fmt.Errorf("parse solutions: %w", err)
+	}
+
+	result.Query = query
+	return &result, nil
+}
