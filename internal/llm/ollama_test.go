@@ -8,14 +8,13 @@ import (
 )
 
 func TestExplain_CommandNotFound(t *testing.T) {
-	// Mock Ollama server
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/generate" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 			return
 		}
 
-		// Verify request
 		var req generateRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Errorf("failed to decode request: %v", err)
@@ -26,7 +25,6 @@ func TestExplain_CommandNotFound(t *testing.T) {
 			t.Error("expected stream to be false")
 		}
 
-		// Return mock response
 		resp := generateResponse{
 			Response: `{"explanation": "Command 'asdfnotfound' was not found in PATH", "fix": ""}`,
 			Done:     true,
@@ -35,7 +33,6 @@ func TestExplain_CommandNotFound(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// Create client with test server
 	client := &Client{
 		baseURL:    server.URL,
 		model:      "test-model",

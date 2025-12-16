@@ -2,6 +2,7 @@ package llm
 
 import (
 	"bytes"
+	"dev-cli/internal/config"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,7 +15,7 @@ import (
 const (
 	DefaultOllamaURL = "http://localhost:11434"
 	DefaultModel     = "qwen2.5-coder:3b-instruct"
-	FallbackModel    = "deepseek-r1:1.5b"
+	FallbackModel    = "qwen2.5-coder:3b-instruct-q8_0"
 	RequestTimeout   = 30 * time.Second
 )
 
@@ -29,15 +30,15 @@ type Client struct {
 	httpClient *http.Client
 }
 
-func NewClient() *Client {
+func NewClient(cfg *config.Config) *Client {
 	baseURL := DefaultOllamaURL
-	if envURL := os.Getenv("DEV_CLI_OLLAMA_URL"); envURL != "" {
-		baseURL = envURL
+	if cfg.OllamaURL != "" {
+		baseURL = cfg.OllamaURL
 	}
 
 	model := DefaultModel
-	if envModel := os.Getenv("DEV_CLI_OLLAMA_MODEL"); envModel != "" {
-		model = envModel
+	if cfg.OllamaModel != "" {
+		model = cfg.OllamaModel
 	}
 
 	return &Client{
@@ -50,10 +51,11 @@ func NewClient() *Client {
 }
 
 type generateRequest struct {
-	Model  string `json:"model"`
-	Prompt string `json:"prompt"`
-	Stream bool   `json:"stream"`
-	Format string `json:"format,omitempty"`
+	Model     string `json:"model"`
+	Prompt    string `json:"prompt"`
+	Stream    bool   `json:"stream"`
+	Format    string `json:"format,omitempty"`
+	KeepAlive string `json:"keep_alive,omitempty"`
 }
 
 type generateResponse struct {
@@ -73,7 +75,7 @@ RULES:
 2. "fix" = EXACT shell command to run (NOT advice, NOT instructions - just the command)
    - Good fix: "npm init -y new line and more command if needed to run in sequence"
    - Bad fix: "Make sure package.json exists"
-   - If no fix possible, refer to sources more authetic to that problem to precise documentation etc ""
+   - If no fix possible, refer to sources more authentic to that problem to precise documentation etc ""
 
 EXAMPLES:
 - package.json missing → {"explanation": "Missing package.json", "fix": "npm init -y"}
@@ -91,6 +93,10 @@ JSON response:`, cmd, exitCode, output)
 		Prompt: prompt,
 		Stream: false,
 		Format: "json",
+	}
+
+	if os.Getenv("DEV_CLI_OLLAMA_UNLOAD") == "true" {
+		req.KeepAlive = "0m"
 	}
 
 	reqBody, err := json.Marshal(req)
@@ -157,6 +163,10 @@ OUTPUT JSON ONLY:
 		Format: "json",
 	}
 
+	if os.Getenv("DEV_CLI_OLLAMA_UNLOAD") == "true" {
+		req.KeepAlive = "0m"
+	}
+
 	reqBody, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
@@ -187,4 +197,104 @@ OUTPUT JSON ONLY:
 
 	result.Query = query
 	return &result, nil
+}
+
+func (c *Client) AnalyzeLog(logLines string) (*LogAnalysisResult, error) {
+	prompt := fmt.Sprintf(`You are a Log Analyzer. Identify the error in these log lines.
+
+OUTPUT JSON ONLY:
+{
+  "explanation": "Brief description of the error (1 sentence)",
+  "fix": "Suggested command or action to fix it (or empty if unknown)"
+}
+
+LOGS:
+%s`, logLines)
+
+	req := generateRequest{
+		Model:  c.model,
+		Prompt: prompt,
+		Stream: false,
+		Format: "json",
+	}
+
+	if os.Getenv("DEV_CLI_OLLAMA_UNLOAD") == "true" {
+		req.KeepAlive = "0m"
+	}
+
+	reqBody, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	resp, err := c.httpClient.Post(c.baseURL+"/api/generate", "application/json", bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, fmt.Errorf("call Ollama: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("ollama status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var genResp generateResponse
+	if err := json.NewDecoder(resp.Body).Decode(&genResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	var result LogAnalysisResult
+	responseText := strings.TrimSpace(genResp.Response)
+	if err := json.Unmarshal([]byte(responseText), &result); err != nil {
+		return &LogAnalysisResult{Explanation: responseText}, nil
+	}
+
+	return &result, nil
+}
+
+func (c *Client) Solve(goal string) (string, error) {
+	prompt := fmt.Sprintf(`You are an Autonomous CLI Agent. The user wants to: "%s".
+Provide a SINGLE shell command to achieve this.
+
+RULES:
+1. Output ONLY the command. No markdown, no explanations.
+2. If multiple steps are needed, chain them with && or ;
+3. Assume a standard Linux environment.
+4. BE SAFE. Do not return commands that delete data without confirmation unless explicitly asked.
+
+GOAL: %s
+COMMAND:`, goal, goal)
+
+	req := generateRequest{
+		Model:  c.model,
+		Prompt: prompt,
+		Stream: false,
+	}
+
+	if os.Getenv("DEV_CLI_OLLAMA_UNLOAD") == "true" {
+		req.KeepAlive = "0m"
+	}
+
+	reqBody, err := json.Marshal(req)
+	if err != nil {
+		return "", fmt.Errorf("marshal request: %w", err)
+	}
+
+	resp, err := c.httpClient.Post(c.baseURL+"/api/generate", "application/json", bytes.NewReader(reqBody))
+	if err != nil {
+		return "", fmt.Errorf("call Ollama: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("ollama status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var genResp generateResponse
+	if err := json.NewDecoder(resp.Body).Decode(&genResp); err != nil {
+		return "", fmt.Errorf("decode response: %w", err)
+	}
+
+	return strings.TrimSpace(genResp.Response), nil
 }

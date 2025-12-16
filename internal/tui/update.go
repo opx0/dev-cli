@@ -1,14 +1,23 @@
 package tui
 
 import (
+	"database/sql"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 
+	"dev-cli/internal/storage"
+
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+type historyLoadedMsg struct {
+	history []storage.HistoryItem
+	db      *sql.DB
+	err     error
+}
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
@@ -29,10 +38,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = StateMain
 		}
 
+	case gpuStatsMsg:
+		m.gpuStats = msg.stats
+
+	case serviceHealthMsg:
+		m.serviceHealth = msg.services
+
+	case historyLoadedMsg:
+		if msg.err != nil {
+			// Handle error, maybe show in status or log
+			// For now just ignore or log to viewport if debug
+		} else {
+			m.db = msg.db
+			m.commandHistory = msg.history
+		}
+
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
-		cmds = append(cmds, cmd)
+		cmds = append(cmds, cmd, checkGPUStats, checkDockerHealth, checkServices)
 
 	case commandOutputMsg:
 		m.viewport.SetContent(m.viewport.View() + string(msg))
@@ -52,6 +76,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 
+		// Global Tab Switching
+		switch msg.String() {
+		case "1":
+			m.activeTab = TabDashboard
+			m.viewport.SetContent("")
+		case "2":
+			m.activeTab = TabMonitor
+			m.viewport.SetContent("")
+		case "3":
+			m.activeTab = TabAssist
+			m.viewport.SetContent(strings.Join(m.chatHistory, "\n"))
+		case "4":
+			m.activeTab = TabHistory
+			m.viewport.SetContent("")
+		}
+
 		if m.mode == ModeInsert {
 
 			switch msg.String() {
@@ -63,6 +103,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "enter":
 				val := m.input.Value()
 				m.input.SetValue("")
+
+				if m.activeTab == TabAssist {
+					m.chatHistory = append(m.chatHistory, "> "+val)
+					m.chatHistory = append(m.chatHistory, "AI: Valid point. (Real AI integration coming soon)")
+					m.viewport.SetContent(strings.Join(m.chatHistory, "\n"))
+					m.viewport.GotoBottom()
+					return m, nil
+				}
 
 				return m, executeCommand(val)
 			}
@@ -78,35 +126,68 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.quitting = true
 				return m, tea.Quit
 
-			case "j", "tab":
-				m.focus = (m.focus + 1) % 3
-			case "k", "shift+tab":
-				if m.focus == 0 {
-					m.focus = 2
+			case "tab":
+				m.focus = (m.focus + 1) % 2 // Toggle between 0 (Sidebar) and 1 (Main)
+
+			// Navigation
+			case "j", "down":
+				if m.focus == FocusSidebar {
+					if m.activeTab == TabMonitor {
+						if len(m.dockerHealth.Containers) > 0 {
+							m.monitorCursor = (m.monitorCursor + 1) % len(m.dockerHealth.Containers)
+						}
+					} else if m.activeTab == TabHistory {
+						if len(m.commandHistory) > 0 {
+							m.historyCursor = (m.historyCursor + 1) % len(m.commandHistory)
+						}
+					}
 				} else {
-					m.focus--
-				}
-
-			case "1":
-				m.focus = FocusStatus
-			case "2":
-				m.focus = FocusKeybinds
-			case "3":
-				m.focus = FocusTerminal
-
-			case "up":
-				if m.focus == FocusTerminal {
-					m.viewport.ScrollUp(1)
-				}
-			case "down":
-				if m.focus == FocusTerminal {
 					m.viewport.ScrollDown(1)
 				}
 
-			case "i", "enter":
-				if m.focus == FocusTerminal {
+			case "k", "up":
+				if m.focus == FocusSidebar {
+					if m.activeTab == TabMonitor {
+						if len(m.dockerHealth.Containers) > 0 {
+							m.monitorCursor--
+							if m.monitorCursor < 0 {
+								m.monitorCursor = len(m.dockerHealth.Containers) - 1
+							}
+						}
+					} else if m.activeTab == TabHistory {
+						if len(m.commandHistory) > 0 {
+							m.historyCursor--
+							if m.historyCursor < 0 {
+								m.historyCursor = len(m.commandHistory) - 1
+							}
+						}
+					}
+				} else {
+					m.viewport.ScrollUp(1)
+				}
+
+			case "enter":
+				if m.focus == FocusMain {
 					m.mode = ModeInsert
 					m.input.Focus()
+				}
+
+			case "i":
+				m.mode = ModeInsert
+				m.input.Focus()
+
+			case "ctrl+t":
+				if m.activeTab == TabAssist {
+					if m.aiMode == "local" {
+						m.aiMode = "cloud"
+					} else {
+						m.aiMode = "local"
+					}
+				}
+
+			case "?":
+				if m.activeTab == TabMonitor {
+					// TODO: Helper / RCA trigger
 				}
 			}
 		}
@@ -144,7 +225,9 @@ func executeCommand(input string) tea.Cmd {
 		} else {
 			path, _ = os.UserHomeDir()
 		}
-		os.Chdir(path)
+		if err := os.Chdir(path); err != nil {
+			return func() tea.Msg { return commandOutputMsg(fmt.Sprintf("> cd %s\nError: %v\n", path, err)) }
+		}
 		return func() tea.Msg { return commandOutputMsg(fmt.Sprintf("> cd %s\n", path)) }
 	}
 

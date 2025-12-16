@@ -7,29 +7,30 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"time"
+
+	"dev-cli/internal/config"
 )
 
 const (
 	PerplexityAPIURL = "https://api.perplexity.ai/chat/completions"
-	PerplexityModel  = "sonar"
 )
 
 type PerplexityClient struct {
 	apiKey     string
+	model      string
 	httpClient *http.Client
 }
 
-func NewPerplexityClient() *PerplexityClient {
-	apiKey := os.Getenv("PERPLEXITY_API_KEY")
-	if apiKey == "" {
+func NewPerplexityClient(cfg *config.Config) *PerplexityClient {
+	if cfg.PerplexityKey == "" {
 		return nil
 	}
 
 	return &PerplexityClient{
-		apiKey: apiKey,
+		apiKey: cfg.PerplexityKey,
+		model:  cfg.PerplexityModel,
 		httpClient: &http.Client{
 			Timeout: 60 * time.Second,
 		},
@@ -87,7 +88,7 @@ OUTPUT JSON ONLY (No markdown, no code fences):
 }`, query)
 
 	reqBody, err := json.Marshal(perplexityRequest{
-		Model: PerplexityModel,
+		Model: c.model,
 		Messages: []perplexityMessage{
 			{Role: "system", Content: "You are a helpful developer assistant. Always respond with valid JSON only, no markdown formatting."},
 			{Role: "user", Content: prompt},
@@ -146,4 +147,66 @@ func stripMarkdownFences(s string) string {
 	}
 	s = strings.TrimSuffix(s, "```")
 	return strings.TrimSpace(s)
+}
+
+func (c *PerplexityClient) AnalyzeLog(ctx context.Context, logLines string) (*LogAnalysisResult, error) {
+	prompt := fmt.Sprintf(`You are a Log Analyzer. Identify the error in these log lines.
+
+OUTPUT JSON ONLY (No markdown):
+{
+  "explanation": "Brief description of the error (1 sentence)",
+  "fix": "Suggested command or action to fix it (or empty if unknown)"
+}
+
+LOGS:
+%s`, logLines)
+
+	reqBody, err := json.Marshal(perplexityRequest{
+		Model: c.model,
+		Messages: []perplexityMessage{
+			{Role: "system", Content: "You are a helpful developer assistant. Always respond with valid JSON only, no markdown formatting."},
+			{Role: "user", Content: prompt},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", PerplexityAPIURL, bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("call Perplexity: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("perplexity status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var pResp perplexityResponse
+	if err := json.NewDecoder(resp.Body).Decode(&pResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	if len(pResp.Choices) == 0 {
+		return nil, fmt.Errorf("no response from Perplexity")
+	}
+
+	content := strings.TrimSpace(pResp.Choices[0].Message.Content)
+	content = stripMarkdownFences(content)
+
+	var result LogAnalysisResult
+	if err := json.Unmarshal([]byte(content), &result); err != nil {
+		return &LogAnalysisResult{Explanation: content}, nil
+	}
+
+	return &result, nil
 }

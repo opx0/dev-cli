@@ -1,213 +1,126 @@
 # dev-cli
 
-AI-powered command-line error analysis tool. Captures failed commands and explains why they failed using a local LLM (Ollama).
+**The Autonomous Agentic Terminal.**
+
+`dev-cli` is an AI-powered companion for your terminal. It watches your commands, detects failures, explains them, and can even autonomously fix them.
 
 ## Features
 
-- **×** Automatic error analysis - Explains why commands failed
-- **$** Fix suggestions - Suggests executable commands to fix issues
-- **→** Command history - Logs all commands with exit codes and output
-- **⚠** Query failures - Filter by keyword, time range, or count
-
-## Prerequisites
-
-- **Go 1.21+** for building
-- **Ollama** running locally (Docker or native)
-  ```bash
-  docker run -d -p 11434:11434 ollama/ollama
-  ollama pull qwen2.5-coder:3b-instruct
-  ```
+- **🤖 Autonomous Agent** (`fix`): Auto-detects issues and executes fixes (with your permission).
+- **🧠 Intelligent Research** (`ask`): Asks LLMs (Ollama/Perplexity) how to do things.
+- **👀 Active Monitoring** (`watch`): Streams logs and alerts you on errors.
+- **🔍 Root Cause Analysis** (`explain`): Deep dives into previous failures.
+- **⚙️ Configurable**: Works with local (Ollama) or cloud (Perplexity) models.
 
 ## Installation
 
+### Prerequisites
+
+- **Go 1.21+**
+- **Ollama** (for local AI):
+  ```bash
+  ollama run qwen2.5-coder:3b-instruct
+  ```
+
+### Build & Install
+
 ```bash
-# Build
 go build -o dev-cli .
-
-# Add to PATH (optional)
 sudo mv dev-cli /usr/local/bin/
-
-# Setup shell integration (add to .zshrc)
-echo 'eval "$(dev-cli hook zsh)"' >> ~/.zshrc
-source ~/.zshrc
 ```
 
-## Usage
+### Shell Integration (Zsh)
 
-### Automatic Analysis (via shell hook)
-
-After installation, failed commands are automatically analyzed:
+Add this to your `~/.zshrc` to enable auto-capture:
 
 ```bash
-$ npm install
-npm error: ENOENT: no such file or directory, package.json
-
-× npm install (exit 254)
-  → Missing package.json
-  $ npm init -y
-   [Run Fix?] (y/n):
+eval "$(dev-cli init zsh)"
 ```
 
-### Explicit Capture with `dcap`
+## Command Reference
 
-Use `dcap` to capture command output for richer analysis:
+### `fix`
+
+**Usage**: `dev-cli fix [task]`
+Autonomously attempts to solve a problem or execute a task.
+
+- `[task]`: The natural language description of what you want to do.
+
+### `ask`
+
+**Usage**: `dev-cli ask [query...]`
+Ask the AI for help with commands or general questions.
+
+- `-n, --n <int>`: Number of commands to suggest (default 10).
+- `--local`: Force use of local Ollama model even if cloud key is set.
+
+### `explain` (alias: `why`, `rca`)
+
+**Usage**: `dev-cli explain [flags]`
+Analyze the last failed command or search history for failures.
+
+- `-l, --last <int>`: Analyze the last N failures (default 1).
+- `-f, --filter <string>`: Filter failures by command keyword.
+- `-s, --since <duration>`: Filter by time (e.g., `1h`, `15m`).
+- `-i, --interactive`: Enable interactive mode to run suggested fixes.
+
+### `watch`
+
+**Usage**: `dev-cli watch [flags]`
+Monitor logs in real-time for errors.
+
+- `--file <path>`: Path to a log file to watch.
+- `--docker <container>`: Name or ID of a Docker container to watch.
+- `--ai <backend>`: AI backend to use: `local` (default) or `cloud`.
+
+### `ui`
+
+**Usage**: `dev-cli ui`
+Launch the interactive TUI (Mission Control) to view dashboard, monitor, and chat.
+
+### `init` (alias: `hook`)
+
+**Usage**: `dev-cli init [shell]`
+Print the shell integration script.
+
+- `[shell]`: Currently supports `zsh`.
+
+### `log-event` (Internal)
+
+**Usage**: `dev-cli log-event [flags]`
+Used by the shell hook to log command execution.
+
+- `--command <string>`: The command executed.
+- `--exit-code <int>`: The exit code (0 = success).
+- `--cwd <path>`: Working directory.
+- `--duration-ms <int>`: Execution time in milliseconds.
+- `--output <string>`: Captured command output.
+
+## Database
+
+`dev-cli` uses a local SQLite database to store command history.
+
+- **Location**: `~/.devlogs/history.db` (override with `DEV_CLI_LOG_DIR`).
+- **Schema**: Single `history` table.
+- **Columns**: `id`, `timestamp`, `command`, `exit_code`, `output`, `cwd`, `duration_ms`, `session_id`, `details`.
+
+The database is standard SQLite and can be queried with any SQLite client:
 
 ```bash
-dcap "npm install"    # Captures stdout/stderr for better context
-dcap "prisma migrate" # Works with any command
+sqlite3 ~/.devlogs/history.db "SELECT command, exit_code FROM history WHERE exit_code != 0"
 ```
-
-### Query Historical Failures
-
-```bash
-# Last failure (default)
-dev-cli rca
-
-# Last N failures
-dev-cli rca --last 5
-
-# Filter by keyword
-dev-cli rca --filter "npm"
-dev-cli rca --filter "prisma"
-
-# Filter by time
-dev-cli rca --since "1h"    # Last hour
-dev-cli rca --since "30m"   # Last 30 minutes
-
-# Combine filters
-dev-cli rca --filter "npm" --last 10 --since "24h"
-```
-
-### Interactive Mode
-
-When running with `--interactive`, you'll be prompted to run suggested fixes:
-
-```bash
-dev-cli rca --last 1 --interactive
-```
-
-## Output Format
-
-```
-× npm install (exit 254)     # Red × = failed command
-  → Missing package.json     # Gray → = explanation
-  $ npm init -y              # Green $ = fix command
-   [Run Fix?] (y/n): y
-   Running: npm init -y
-   ✓ Fix applied             # Green ✓ = success
-```
-
-## Commands
-
-| Command             | Description                             |
-| ------------------- | --------------------------------------- |
-| `dev-cli hook zsh`  | Print shell integration script          |
-| `dev-cli log-event` | Log a command (used internally by hook) |
-| `dev-cli rca`       | Analyze failures from log               |
-| `dev-cli help`      | Show help                               |
-
-### RCA Flags
-
-| Flag                 | Description               | Example          |
-| -------------------- | ------------------------- | ---------------- |
-| `--last N`           | Analyze last N failures   | `--last 5`       |
-| `--filter "keyword"` | Filter by command keyword | `--filter "npm"` |
-| `--since "duration"` | Filter by time window     | `--since "1h"`   |
-| `--interactive`      | Enable fix prompts        | `--interactive`  |
 
 ## Configuration
 
-| Environment Variable   | Default                     | Description         |
-| ---------------------- | --------------------------- | ------------------- |
-| `DEV_CLI_LOG_DIR`      | `~/.devlogs`                | Log file directory  |
-| `DEV_CLI_OLLAMA_URL`   | `http://localhost:11434`    | Ollama API endpoint |
-| `DEV_CLI_OLLAMA_MODEL` | `qwen2.5-coder:3b-instruct` | LLM model to use    |
+The CLI is configured via `~/.dev-cli/config.yaml` or Environment Variables.
 
-## Use Cases
-
-### 1. Debug npm/Node.js Issues
-
-```bash
-$ dcap "npm install"
-× npm install (exit 254)
-  → Missing package.json
-  $ npm init -y
-```
-
-### 2. Fix Permission Errors
-
-```bash
-$ dcap "cat /etc/shadow"
-× cat /etc/shadow (exit 1)
-  → Permission denied
-  $ sudo cat /etc/shadow
-```
-
-### 3. Diagnose Git Problems
-
-```bash
-$ dcap "git push"
-× git push (exit 128)
-  → No configured push destination
-  $ git remote add origin <url>
-```
-
-### 4. Missing Commands
-
-```bash
-$ dcap "prisma migrate"
-× prisma (exit 127)
-  → prisma is not recognized
-  $ npm install -g prisma
-```
-
-### 5. Review Recent Failures
-
-```bash
-# What broke in the last hour?
-dev-cli rca --since "1h" --last 10
-
-# All npm issues today
-dev-cli rca --filter "npm" --since "24h"
-```
-
-### 6. CI/CD Integration
-
-```bash
-# In your CI script
-npm test || dev-cli log-event \
-    --command "npm test" \
-    --exit-code $? \
-    --output "$(cat test.log)"
-```
-
-## Log Format
-
-Commands are logged to `~/.devlogs/history.jsonl`:
-
-```json
-{
-  "command": "npm install",
-  "exit_code": 254,
-  "output": "...",
-  "cwd": "/home/user/project",
-  "duration_ms": 1234,
-  "timestamp": "2024-01-01T12:00:00Z"
-}
-```
-
-## Development
-
-```bash
-# Run tests
-go test ./...
-
-# Build
-go build -o dev-cli .
-
-# Test with dev log directory
-export DEV_CLI_LOG_DIR="./e2e/temp"
-```
+| Variable                   | Description        | Default                     |
+| -------------------------- | ------------------ | --------------------------- |
+| `DEV_CLI_OLLAMA_URL`       | Ollama URL         | `http://localhost:11434`    |
+| `DEV_CLI_OLLAMA_MODEL`     | Local Model        | `qwen2.5-coder:3b-instruct` |
+| `DEV_CLI_PERPLEXITY_KEY`   | Perplexity API Key | `""`                        |
+| `DEV_CLI_PERPLEXITY_MODEL` | Cloud Model        | `sonar-pro`                 |
+| `DEV_CLI_LOG_DIR`          | Database Path      | `~/.devlogs`                |
 
 ## License
 

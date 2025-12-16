@@ -1,7 +1,7 @@
 package hook
 
 const ZshHook = `# dev-cli Zsh integration
-# eval "$(dev-cli hook zsh)"
+# eval "$(dev-cli init zsh)"
 
 typeset -g __DEVOPS_CMD=""
 typeset -g __DEVOPS_START_TIME=0
@@ -67,7 +67,7 @@ dcap() {
     rm -f "$tmpfile"
     
     if [[ $exit_code -ne 0 && $exit_code -ne 130 ]]; then
-        dev-cli rca --last 1 --interactive 2>/dev/null
+        dev-cli explain --last 1 --interactive 2>/dev/null
     fi
     
     return $exit_code

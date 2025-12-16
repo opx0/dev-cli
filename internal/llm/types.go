@@ -19,3 +19,8 @@ type ResearchResult struct {
 	Query     string     `json:"query"`
 	Solutions []Solution `json:"solutions"`
 }
+
+type LogAnalysisResult struct {
+	Explanation string `json:"explanation"`
+	Fix         string `json:"fix"`
+}

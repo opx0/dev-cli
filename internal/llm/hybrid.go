@@ -2,8 +2,11 @@ package llm
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
+
+	"dev-cli/internal/config"
 )
 
 var webKeywords = []string{
@@ -27,9 +30,10 @@ type HybridClient struct {
 }
 
 func NewHybridClient() *HybridClient {
+	cfg := config.Load()
 	return &HybridClient{
-		perplexity: NewPerplexityClient(),
-		ollama:     NewClient(),
+		perplexity: NewPerplexityClient(cfg),
+		ollama:     NewClient(cfg),
 	}
 }
 
@@ -46,6 +50,25 @@ func (h *HybridClient) Research(query string) (*ResearchResult, error) {
 
 func (h *HybridClient) HasPerplexity() bool {
 	return h.perplexity != nil
+}
+
+func (h *HybridClient) AnalyzeLog(logLines string, aiMode string) (*LogAnalysisResult, error) {
+	if os.Getenv("DEV_CLI_FORCE_LOCAL") != "" || aiMode == "local" {
+		return h.ollama.AnalyzeLog(logLines)
+	}
+
+	if aiMode == "cloud" {
+		if h.perplexity != nil {
+			return h.perplexity.AnalyzeLog(context.Background(), logLines)
+		}
+		return nil, fmt.Errorf("cloud AI requested but PERPLEXITY_API_KEY is not set")
+	}
+
+	return h.ollama.AnalyzeLog(logLines)
+}
+
+func (h *HybridClient) Solve(goal string) (string, error) {
+	return h.ollama.Solve(goal)
 }
 
 func needsWebSearch(query string) bool {
