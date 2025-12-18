@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// --- Command 1: Hook (Generates the script) ---
 var initCmd = &cobra.Command{
 	Use:       "init [shell]",
 	Short:     "Print shell integration script",
@@ -32,7 +31,6 @@ var initCmd = &cobra.Command{
 	},
 }
 
-// --- Command 2: Log Event (Called by the script) ---
 var (
 	logCommand    string
 	logExitCode   int
@@ -47,14 +45,11 @@ var logEventCmd = &cobra.Command{
 	Hidden: true,
 	Run: func(cmd *cobra.Command, args []string) {
 		if logCommand == "" {
-			return // silently skip empty commands
+			return
 		}
 
 		db, err := storage.InitDB()
 		if err != nil {
-			// Fail silently or log to stderr?
-			// Since this is background, stderr might not be seen.
-			// But for debugging let's keep stderr.
 			return
 		}
 		defer db.Close()
@@ -68,8 +63,6 @@ var logEventCmd = &cobra.Command{
 			Timestamp:  time.Now().UTC().Format(time.RFC3339),
 		}
 
-		// Best effort save
-		// Best effort save
 		if err := storage.SaveCommand(db, entry); err != nil {
 			fmt.Fprintf(os.Stderr, "log-event failed: %v\n", err)
 		}

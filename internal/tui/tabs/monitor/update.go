@@ -83,14 +83,12 @@ func (m Model) Update(msg tea.Msg, keys KeyMap) (Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		// Handle action menu if open
 		if m.showingActions {
 			return m.handleActionMenu(msg)
 		}
 
 		switch {
 		case key.Matches(msg, keys.Tab):
-			// Cycle through 3 panels
 			switch m.focus {
 			case FocusList:
 				m.focus = FocusLogs
@@ -177,7 +175,6 @@ func (m Model) Update(msg tea.Msg, keys KeyMap) (Model, tea.Cmd) {
 			}
 
 		case key.Matches(msg, keys.TriggerRCA):
-			// TODO: Trigger AI RCA
 		}
 	}
 
@@ -202,21 +199,15 @@ func (m Model) handleActionMenu(msg tea.KeyMsg) (Model, tea.Cmd) {
 	case "esc", "q":
 		m.showingActions = false
 	case "enter":
-		// Execute selected action
 		m.showingActions = false
-		// Actions would be handled here based on actionMenuIndex
 	case "s":
-		// Shell into container
 		m.showingActions = false
 	case "l":
-		// Follow logs
 		m.followMode = true
 		m.showingActions = false
 	case "r":
-		// Restart container
 		m.showingActions = false
 	case "x":
-		// Stop/remove container
 		m.showingActions = false
 	}
 

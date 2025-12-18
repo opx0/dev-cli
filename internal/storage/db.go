@@ -31,7 +31,6 @@ func InitDB() (*sql.DB, error) {
 }
 
 func OpenDB(path string) (*sql.DB, error) {
-	// Open database
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
@@ -41,7 +40,6 @@ func OpenDB(path string) (*sql.DB, error) {
 		return nil, fmt.Errorf("ping db: %w", err)
 	}
 
-	// Schema Migration
 	if err := migrate(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
@@ -63,10 +61,6 @@ func migrate(db *sql.DB) error {
 		details     TEXT
 	);
 
-	/*
-	  Simplified Schema:
-	  Just one standard table. No triggers. No virtual tables.
-	*/
 	`
 
 	_, err := db.Exec(schema)

@@ -19,39 +19,32 @@ func (m Model) View() string {
 
 	var content strings.Builder
 
-	// Header bar
 	content.WriteString(m.renderHeaderBar(contentWidth) + "\n")
 
-	// Calculate heights
 	starshipHeight := 0
 	if m.StarshipLine() != "" {
 		starshipHeight = 1
 	}
 	blocksHeight := m.height - 8 - starshipHeight
 
-	// Blocks area
 	content.WriteString(m.renderBlocksArea(contentWidth, blocksHeight) + "\n")
 
-	// Starship status line (warp-style bottom bar)
 	if m.StarshipLine() != "" {
 		content.WriteString(m.renderStarshipBar(contentWidth) + "\n")
 	}
 
-	// Input area
 	content.WriteString(m.renderInputArea(contentWidth))
 
 	return content.String()
 }
 
 func (m Model) renderHeaderBar(width int) string {
-	// Title
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(theme.Lavender)
 
 	title := titleStyle.Render("◈ Agent")
 
-	// CWD
 	cwdStyle := lipgloss.NewStyle().
 		Foreground(theme.Overlay0).
 		Italic(true)
@@ -60,17 +53,14 @@ func (m Model) renderHeaderBar(width int) string {
 	if home := os.Getenv("HOME"); home != "" && strings.HasPrefix(cwdDisplay, home) {
 		cwdDisplay = "~" + cwdDisplay[len(home):]
 	}
-	// Truncate if too long
 	maxCwdLen := 30
 	if len(cwdDisplay) > maxCwdLen {
 		cwdDisplay = "..." + cwdDisplay[len(cwdDisplay)-maxCwdLen+3:]
 	}
 	cwd := cwdStyle.Render(" " + cwdDisplay)
 
-	// Widgets
 	var widgets []string
 
-	// Git status (warp-style)
 	gitStatus := m.GitStatus()
 	if gitStatus.IsRepo {
 		gitStyle := lipgloss.NewStyle().Foreground(theme.Mauve)
@@ -82,7 +72,6 @@ func (m Model) renderHeaderBar(width int) string {
 		widgets = append(widgets, gitStyle.Render(branchText))
 	}
 
-	// Docker widget
 	dockerHealth := m.DockerHealth()
 	if dockerHealth.Available {
 		running := 0
@@ -95,7 +84,6 @@ func (m Model) renderHeaderBar(width int) string {
 		widgets = append(widgets, dockerStyle.Render(fmt.Sprintf("🐳 %d", running)))
 	}
 
-	// GPU widget
 	gpuStats := m.GPUStats()
 	if gpuStats.Available {
 		gpuStyle := lipgloss.NewStyle().Foreground(theme.Overlay0)
@@ -105,7 +93,6 @@ func (m Model) renderHeaderBar(width int) string {
 		widgets = append(widgets, gpuStyle.Render(fmt.Sprintf("▮ %d%%", gpuStats.UtilizationPct)))
 	}
 
-	// AI mode
 	aiStyle := lipgloss.NewStyle().
 		Background(theme.Surface0).
 		Foreground(theme.Green).
@@ -114,7 +101,6 @@ func (m Model) renderHeaderBar(width int) string {
 
 	widgetStr := strings.Join(widgets, " │ ")
 
-	// Build header
 	leftSide := title + cwd
 	leftWidth := lipgloss.Width(leftSide)
 	rightWidth := lipgloss.Width(widgetStr)
@@ -150,7 +136,6 @@ func (m Model) renderBlocksArea(width, height int) string {
 
 	blocks := m.Blocks()
 	if len(blocks) == 0 {
-		// Empty state
 		emptyStyle := lipgloss.NewStyle().
 			Foreground(theme.Overlay0).
 			Padding(2, 2)
@@ -173,13 +158,11 @@ func (m Model) renderBlocksArea(width, height int) string {
 `
 		content.WriteString(emptyStyle.Render(welcomeMsg))
 	} else {
-		// Render blocks from pipeline state
 		blockWidth := width - 6
 		for i, block := range blocks {
 			content.WriteString(m.renderBlock(block, i, blockWidth) + "\n")
 		}
 
-		// Executing indicator
 		if m.isExecuting {
 			execStyle := lipgloss.NewStyle().
 				Foreground(theme.Yellow).
@@ -194,7 +177,6 @@ func (m Model) renderBlocksArea(width, height int) string {
 func (m Model) renderBlock(block pipeline.Block, index int, width int) string {
 	isSelected := index == m.selectedBlock
 
-	// Block border style (warp-style left border)
 	var borderStyle lipgloss.Style
 	if isSelected {
 		borderStyle = lipgloss.NewStyle().
@@ -220,18 +202,14 @@ func (m Model) renderBlock(block pipeline.Block, index int, width int) string {
 
 	var blockContent strings.Builder
 
-	// Header line
 	if block.Type == pipeline.BlockTypeAI {
-		// AI query
 		queryStyle := lipgloss.NewStyle().Foreground(theme.Blue).Bold(true)
 		blockContent.WriteString(queryStyle.Render("? " + block.Command))
 	} else {
-		// Command
 		promptStyle := lipgloss.NewStyle().Foreground(theme.Green).Bold(true)
 		cmdStyle := lipgloss.NewStyle().Foreground(theme.Text).Bold(true)
 		blockContent.WriteString(promptStyle.Render("❯ ") + cmdStyle.Render(block.Command))
 
-		// Timestamp and exit code
 		metaStyle := lipgloss.NewStyle().Foreground(theme.Overlay0)
 		meta := metaStyle.Render(fmt.Sprintf("  %s", block.Timestamp.Format("15:04:05")))
 
@@ -247,7 +225,6 @@ func (m Model) renderBlock(block pipeline.Block, index int, width int) string {
 		blockContent.WriteString(meta)
 	}
 
-	// Fold indicator
 	if block.Folded {
 		foldStyle := lipgloss.NewStyle().Foreground(theme.Overlay0)
 		blockContent.WriteString(foldStyle.Render(" ▸"))
@@ -255,14 +232,12 @@ func (m Model) renderBlock(block pipeline.Block, index int, width int) string {
 
 	blockContent.WriteString("\n")
 
-	// Output (if not folded)
 	if !block.Folded && block.Output != "" {
 		outputStyle := lipgloss.NewStyle().Foreground(theme.Text)
 		if block.Type == pipeline.BlockTypeAI {
 			outputStyle = outputStyle.Foreground(theme.Subtext0)
 		}
 
-		// Show more lines - users can fold to collapse
 		lines := strings.Split(block.Output, "\n")
 		maxLines := 50
 		if len(lines) > maxLines {
@@ -276,7 +251,6 @@ func (m Model) renderBlock(block pipeline.Block, index int, width int) string {
 		}
 	}
 
-	// AI suggestion (if any)
 	if block.AISuggestion != "" {
 		fixStyle := lipgloss.NewStyle().
 			Background(theme.Surface0).
@@ -291,7 +265,6 @@ func (m Model) renderBlock(block pipeline.Block, index int, width int) string {
 		blockContent.WriteString("\n   " + actionsStyle.Render("[r]un") + " " + actionsStyle.Render("[c]opy") + " " + actionsStyle.Render("[d]ismiss"))
 	}
 
-	// Show suggestions from pipeline
 	suggestions := m.State().GetSuggestionsForBlock(block.ID)
 	if len(suggestions) > 0 && block.AISuggestion == "" {
 		sug := suggestions[0]
@@ -322,7 +295,6 @@ func (m Model) renderInputArea(width int) string {
 	promptStyle := theme.Prompt
 	prompt := promptStyle.Render("❯ ")
 
-	// Mode hint
 	hintStyle := lipgloss.NewStyle().
 		Foreground(theme.Overlay0).
 		Italic(true)
@@ -336,7 +308,6 @@ func (m Model) renderInputArea(width int) string {
 
 	inputRow := prompt + m.input.View()
 
-	// Calculate space for hint
 	inputWidth := lipgloss.Width(inputRow)
 	hintWidth := lipgloss.Width(hint)
 	spacerWidth := width - inputWidth - hintWidth - 4

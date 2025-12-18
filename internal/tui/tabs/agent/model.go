@@ -10,7 +10,6 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 )
 
-// Model for Agent tab - uses pipeline architecture
 type Model struct {
 	width  int
 	height int
@@ -18,18 +17,15 @@ type Model struct {
 	viewport viewport.Model
 	input    textinput.Model
 
-	// Pipeline integration
 	pipeline  *pipeline.Pipeline
 	cmdPlugin *command.Plugin
 	aiPlugin  *ai.Plugin
 
-	// UI state
 	insertMode    bool
 	isExecuting   bool
 	selectedBlock int
 }
 
-// New creates a new Agent model with pipeline
 func New(pipe *pipeline.Pipeline) Model {
 	ti := textinput.New()
 	ti.Placeholder = "command or ?question..."
@@ -38,7 +34,6 @@ func New(pipe *pipeline.Pipeline) Model {
 
 	vp := viewport.New(0, 0)
 
-	// Get plugins (they should already be registered)
 	var cmdPlugin *command.Plugin
 	var aiPlugin *ai.Plugin
 
@@ -98,7 +93,6 @@ func (m Model) SetExecuting(exec bool) Model {
 	return m
 }
 
-// ExecuteCommand runs a command through the pipeline
 func (m Model) ExecuteCommand(cmd string) Model {
 	if m.cmdPlugin != nil {
 		m.cmdPlugin.Execute(cmd)
@@ -107,12 +101,10 @@ func (m Model) ExecuteCommand(cmd string) Model {
 	return m
 }
 
-// ExecuteAIQuery runs an AI query through the pipeline
 func (m Model) ExecuteAIQuery(query string) Model {
 	if m.cmdPlugin != nil {
 		block := m.cmdPlugin.ExecuteAI(query)
 
-		// If we have AI plugin, get the response
 		if m.aiPlugin != nil {
 			response, _ := m.aiPlugin.AnswerQuery(query, block.ID)
 			m.State().UpdateBlock(block.ID, func(b *pipeline.Block) {
@@ -124,12 +116,10 @@ func (m Model) ExecuteAIQuery(query string) Model {
 	return m
 }
 
-// State returns the pipeline state store
 func (m Model) State() *pipeline.StateStore {
 	return m.pipeline.State()
 }
 
-// Blocks returns the blocks from state (thread-safe copy)
 func (m Model) Blocks() []pipeline.Block {
 	return m.State().GetBlocks()
 }
@@ -188,7 +178,6 @@ func (m Model) Height() int {
 	return m.height
 }
 
-// Convenience getters that read from state store
 func (m Model) Cwd() string {
 	return m.State().Cwd
 }
@@ -210,7 +199,6 @@ func (m Model) StarshipLine() string {
 }
 
 func (m Model) AIMode() string {
-	// Could be stored in state, for now default to "local"
 	return "local"
 }
 
@@ -227,7 +215,6 @@ func (m Model) BlockCount() int {
 	return len(m.Blocks())
 }
 
-// GetSuggestions returns AI suggestions for the selected block
 func (m Model) GetSuggestions() []pipeline.Suggestion {
 	if m.selectedBlock < 0 || m.selectedBlock >= len(m.Blocks()) {
 		return nil
@@ -236,52 +223,43 @@ func (m Model) GetSuggestions() []pipeline.Suggestion {
 	return m.State().GetSuggestionsForBlock(block.ID)
 }
 
-// HasLastError returns true if the last command failed
 func (m Model) HasLastError() bool {
 	return m.State().LastError != nil
 }
 
-// SetCwd updates the current working directory in state
 func (m Model) SetCwd(cwd string) Model {
 	m.State().SetCwd(cwd)
 	return m
 }
 
-// SetDockerHealth updates docker health in state
 func (m Model) SetDockerHealth(h infra.DockerHealth) Model {
 	m.State().SetDockerHealth(h)
 	return m
 }
 
-// SetGPUStats updates GPU stats in state
 func (m Model) SetGPUStats(s infra.GPUStats) Model {
 	m.State().SetGPUStats(s)
 	return m
 }
 
-// SetGitStatus updates git status in state
 func (m Model) SetGitStatus(g infra.GitStatus) Model {
 	m.State().SetGitStatus(g)
 	return m
 }
 
-// SetStarshipLine updates starship line in state
 func (m Model) SetStarshipLine(line string) Model {
 	m.State().SetStarshipLine(line)
 	return m
 }
 
-// Publish publishes an event to the pipeline
 func (m Model) Publish(event pipeline.Event) {
 	m.pipeline.Publish(event)
 }
 
-// Subscribe subscribes to pipeline events
 func (m Model) Subscribe(eventType pipeline.EventType, handler pipeline.EventHandler) {
 	m.pipeline.Subscribe(eventType, handler)
 }
 
-// GetContext returns context for AI
 func (m Model) GetContext() map[string]interface{} {
 	return m.State().GetContext()
 }

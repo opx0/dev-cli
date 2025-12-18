@@ -61,7 +61,6 @@ func runWatch(cmd *cobra.Command, args []string) {
 			fmt.Fprintf(os.Stderr, "Error getting stdout pipe: %v\n", err)
 			os.Exit(1)
 		}
-		// Merge stderr into stdout (Docker often logs errors to stderr)
 		c.Stderr = c.Stdout
 		if err := c.Start(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error starting docker logs: %v\n", err)

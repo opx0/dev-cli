@@ -17,27 +17,22 @@ func (m Model) View() string {
 
 	var content strings.Builder
 
-	// Header bar with AI mode toggle
 	content.WriteString(m.renderHeaderBar(contentWidth) + "\n")
 
-	// Chat area
 	content.WriteString(m.renderChatArea(contentWidth, m.height-8) + "\n")
 
-	// Input area
 	content.WriteString(m.renderInputArea(contentWidth))
 
 	return content.String()
 }
 
 func (m Model) renderHeaderBar(width int) string {
-	// Title
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(theme.Lavender)
 
 	title := titleStyle.Render("◇ Assistant")
 
-	// AI mode badge
 	var modeBadge string
 	if m.aiMode == "local" {
 		modeBadge = lipgloss.NewStyle().
@@ -55,13 +50,11 @@ func (m Model) renderHeaderBar(width int) string {
 			Render("cloud ●")
 	}
 
-	// Toggle hint
 	hintStyle := lipgloss.NewStyle().
 		Foreground(theme.Overlay0).
 		Italic(true)
 	hint := hintStyle.Render(" [Ctrl+t]")
 
-	// Context badge
 	contextBadge := ""
 	if m.recentCommands > 0 || m.containerCount > 0 || m.errorCount > 0 {
 		ctx := components.NewContextBadge().
@@ -71,7 +64,6 @@ func (m Model) renderHeaderBar(width int) string {
 		contextBadge = ctx.Render()
 	}
 
-	// Build header
 	leftSide := title
 	rightSide := contextBadge + "  " + modeBadge + hint
 
@@ -108,7 +100,6 @@ func (m Model) renderChatArea(width, height int) string {
 	var content strings.Builder
 
 	if len(m.messages) == 0 {
-		// Empty state with suggestions
 		emptyStyle := lipgloss.NewStyle().
 			Foreground(theme.Overlay0).
 			Italic(true).
@@ -130,13 +121,11 @@ Try: "Why is my container restarting?"
 
 		content.WriteString(emptyStyle.Render(welcomeMsg))
 	} else {
-		// Render messages as chat bubbles
 		contentWidth := width - 8
 		for _, msg := range m.messages {
 			content.WriteString(m.renderMessage(msg, contentWidth) + "\n\n")
 		}
 
-		// Loading indicator
 		if m.isLoading {
 			loadingStyle := lipgloss.NewStyle().
 				Foreground(theme.Overlay0).
@@ -156,7 +145,6 @@ func (m Model) renderMessage(msg ChatMessage, width int) string {
 }
 
 func (m Model) renderUserMessage(content string, width int) string {
-	// User messages aligned right with bubble style
 	labelStyle := lipgloss.NewStyle().
 		Foreground(theme.Overlay0).
 		Bold(true)
@@ -170,7 +158,6 @@ func (m Model) renderUserMessage(content string, width int) string {
 	label := labelStyle.Render("You")
 	bubble := bubbleStyle.Render(content)
 
-	// Right align
 	labelWidth := lipgloss.Width(label)
 	bubbleWidth := lipgloss.Width(bubble)
 
@@ -191,7 +178,6 @@ func (m Model) renderUserMessage(content string, width int) string {
 }
 
 func (m Model) renderAssistantMessage(content string, width int) string {
-	// Assistant messages aligned left with different style
 	labelStyle := lipgloss.NewStyle().
 		Foreground(theme.Lavender).
 		Bold(true)
@@ -205,7 +191,6 @@ func (m Model) renderAssistantMessage(content string, width int) string {
 
 	label := labelStyle.Render(modeIcon + " Assistant")
 
-	// Check if content contains code blocks
 	if strings.Contains(content, "```") {
 		return "  " + label + "\n" + m.renderContentWithCodeBlocks(content, width-4)
 	}
@@ -246,13 +231,11 @@ func (m Model) renderContentWithCodeBlocks(content string, width int) string {
 	for _, line := range lines {
 		if strings.HasPrefix(line, "```") {
 			if inCodeBlock {
-				// End code block
 				result.WriteString("  " + codeStyle.MaxWidth(width).Render(codeBuffer.String()) + "\n")
 				result.WriteString("  " + actionStyle.Render("[Copy]") + " " + actionStyle.Render("[Apply]") + "\n")
 				codeBuffer.Reset()
 				inCodeBlock = false
 			} else {
-				// Start code block - flush text buffer
 				if textBuffer.Len() > 0 {
 					result.WriteString("  " + textStyle.MaxWidth(width).Render(textBuffer.String()) + "\n")
 					textBuffer.Reset()
@@ -274,7 +257,6 @@ func (m Model) renderContentWithCodeBlocks(content string, width int) string {
 		}
 	}
 
-	// Flush remaining buffers
 	if textBuffer.Len() > 0 {
 		result.WriteString("  " + textStyle.MaxWidth(width).Render(textBuffer.String()))
 	}
@@ -296,7 +278,6 @@ func (m Model) renderInputArea(width int) string {
 	promptStyle := theme.Prompt
 	prompt := promptStyle.Render("❯ ")
 
-	// Mode hint
 	hintStyle := lipgloss.NewStyle().
 		Foreground(theme.Overlay0).
 		Italic(true)
@@ -310,7 +291,6 @@ func (m Model) renderInputArea(width int) string {
 
 	inputRow := prompt + m.input.View()
 
-	// Calculate space for hint
 	inputWidth := lipgloss.Width(inputRow)
 	hintWidth := lipgloss.Width(hint)
 	spacerWidth := width - inputWidth - hintWidth - 4

@@ -10,7 +10,6 @@ import (
 	"time"
 )
 
-// Result holds the output of a command execution
 type Result struct {
 	Command   string
 	Output    string
@@ -20,13 +19,10 @@ type Result struct {
 	Shell     string
 }
 
-// getShell returns the user's preferred shell
 func getShell() string {
-	// Check SHELL env var
 	if shell := os.Getenv("SHELL"); shell != "" {
 		return shell
 	}
-	// Default to zsh, fallback to bash, then sh
 	for _, shell := range []string{"/bin/zsh", "/usr/bin/zsh", "/bin/bash", "/bin/sh"} {
 		if _, err := os.Stat(shell); err == nil {
 			return shell
@@ -35,12 +31,10 @@ func getShell() string {
 	return "/bin/sh"
 }
 
-// Execute runs a shell command using the user's configured shell (with aliases, functions, etc.)
 func Execute(command string) Result {
 	return ExecuteWithTimeout(command, 60*time.Second)
 }
 
-// ExecuteWithTimeout runs a shell command with a timeout
 func ExecuteWithTimeout(command string, timeout time.Duration) Result {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -48,18 +42,13 @@ func ExecuteWithTimeout(command string, timeout time.Duration) Result {
 	return ExecuteWithContext(ctx, command)
 }
 
-// ExecuteWithContext runs a shell command with context for cancellation
-// Sources user config explicitly without interactive mode to avoid TTY conflicts
 func ExecuteWithContext(ctx context.Context, command string) Result {
 	start := time.Now()
 	shell := getShell()
 
-	// Don't use -i (interactive) as it conflicts with bubbletea's terminal control
-	// Instead, source the config file explicitly for aliases
 	var cmd *exec.Cmd
 	var wrappedCmd string
 	if strings.HasSuffix(shell, "zsh") {
-		// Source .zshrc for aliases, then run command
 		wrappedCmd = fmt.Sprintf("source ~/.zshrc 2>/dev/null; %s", command)
 		cmd = exec.CommandContext(ctx, shell, "-c", wrappedCmd)
 	} else if strings.HasSuffix(shell, "bash") {
@@ -70,19 +59,15 @@ func ExecuteWithContext(ctx context.Context, command string) Result {
 		cmd = exec.CommandContext(ctx, shell, "-c", command)
 	}
 
-	// Capture both stdout and stderr
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	// Set working directory to current directory
 	cwd, _ := os.Getwd()
 	cmd.Dir = cwd
 
-	// Inherit environment - this preserves PATH, HOME, etc.
 	cmd.Env = os.Environ()
 
-	// Add TERM if not set (some programs need it)
 	hasTermEnv := false
 	for _, env := range cmd.Env {
 		if strings.HasPrefix(env, "TERM=") {
@@ -98,11 +83,9 @@ func ExecuteWithContext(ctx context.Context, command string) Result {
 
 	duration := time.Since(start)
 
-	// Combine stdout and stderr
 	output := stdout.String()
 	stderrStr := stderr.String()
 
-	// Filter out common zsh startup noise
 	stderrStr = filterShellNoise(stderrStr)
 
 	if stderrStr != "" {
@@ -112,7 +95,6 @@ func ExecuteWithContext(ctx context.Context, command string) Result {
 		output += stderrStr
 	}
 
-	// Clean up trailing newline
 	output = strings.TrimSuffix(output, "\n")
 
 	exitCode := 0
@@ -137,13 +119,11 @@ func ExecuteWithContext(ctx context.Context, command string) Result {
 	}
 }
 
-// filterShellNoise removes common shell startup messages that aren't useful
 func filterShellNoise(stderr string) string {
 	lines := strings.Split(stderr, "\n")
 	var filtered []string
 
 	for _, line := range lines {
-		// Skip common zinit/zsh startup messages
 		if strings.Contains(line, "compinit") ||
 			strings.Contains(line, "compdef") ||
 			strings.Contains(line, "zinit") ||
@@ -158,7 +138,6 @@ func filterShellNoise(stderr string) string {
 	return strings.Join(filtered, "\n")
 }
 
-// ExecuteSimple runs a command without loading user config (faster, for internal use)
 func ExecuteSimple(command string) Result {
 	start := time.Now()
 
@@ -208,13 +187,11 @@ func ExecuteSimple(command string) Result {
 	}
 }
 
-// IsAIQuery checks if input is an AI query (starts with ? or @)
 func IsAIQuery(input string) bool {
 	input = strings.TrimSpace(input)
 	return strings.HasPrefix(input, "?") || strings.HasPrefix(input, "@")
 }
 
-// ParseAIQuery extracts the query from AI input
 func ParseAIQuery(input string) (queryType string, query string) {
 	input = strings.TrimSpace(input)
 
@@ -231,7 +208,6 @@ func ParseAIQuery(input string) (queryType string, query string) {
 	}
 
 	if strings.HasPrefix(input, "@") {
-		// Generic @ command
 		parts := strings.SplitN(strings.TrimPrefix(input, "@"), " ", 2)
 		if len(parts) == 2 {
 			return parts[0], parts[1]

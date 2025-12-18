@@ -8,7 +8,6 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 )
 
-// OutputBlock represents a single command output block
 type OutputBlock struct {
 	Command   string
 	Output    string
@@ -24,17 +23,14 @@ type Model struct {
 	viewport viewport.Model
 	input    textinput.Model
 
-	// System status
 	dockerHealth  infra.DockerHealth
 	gpuStats      infra.GPUStats
 	serviceHealth []infra.ServiceStatus
 	cwd           string
 
-	// Output blocks (warp-style)
 	outputBlocks  []OutputBlock
 	selectedBlock int
 
-	// UI state
 	insertMode     bool
 	showingActions bool
 }
@@ -158,7 +154,6 @@ func (m Model) Cwd() string {
 	return m.cwd
 }
 
-// Output block management
 func (m Model) AddOutputBlock(cmd string) Model {
 	block := OutputBlock{
 		Command: cmd,
@@ -208,11 +203,9 @@ func (m Model) SetShowingActions(show bool) Model {
 	return m
 }
 
-// HeaderWidgets returns widgets for the header bar
 func (m Model) HeaderWidgets() []components.HeaderWidget {
 	var widgets []components.HeaderWidget
 
-	// Docker widget
 	dockerWidget := components.NewHeaderWidget("🐳", "Docker", "")
 	if m.dockerHealth.Available {
 		running := 0
@@ -229,7 +222,6 @@ func (m Model) HeaderWidgets() []components.HeaderWidget {
 	}
 	widgets = append(widgets, dockerWidget)
 
-	// GPU widget (if available)
 	if m.gpuStats.Available {
 		gpuWidget := components.NewHeaderWidget("▮", "GPU", "")
 		gpuWidget.Value = string(rune('0'+m.gpuStats.UtilizationPct/10)) + "0%"
@@ -241,7 +233,6 @@ func (m Model) HeaderWidgets() []components.HeaderWidget {
 		widgets = append(widgets, gpuWidget)
 	}
 
-	// Services widget
 	onlineCount := 0
 	for _, s := range m.serviceHealth {
 		if s.Available {

@@ -47,7 +47,6 @@ Reads from your command history (requires shell integration via 'dev-cli init zs
   dev-cli explain -i`,
 	Aliases: []string{"why", "rca"},
 	Run: func(cmd *cobra.Command, args []string) {
-		// In interactive mode, check if stdin is a TTY
 		if explainInteractive && !term.IsTerminal(int(os.Stdin.Fd())) {
 			return
 		}
@@ -89,7 +88,6 @@ func analyzeFromLog(limit int, filterStr, sinceStr string, interactive bool) {
 	}
 	defer db.Close()
 
-	// Parse since duration
 	var sinceDur time.Duration
 	if sinceStr != "" {
 		sinceDur, err = time.ParseDuration(sinceStr)
@@ -99,7 +97,6 @@ func analyzeFromLog(limit int, filterStr, sinceStr string, interactive bool) {
 		}
 	}
 
-	// Default limit to 1 if not specified
 	if limit == 0 {
 		limit = 1
 	}
@@ -120,7 +117,6 @@ func analyzeFromLog(limit int, filterStr, sinceStr string, interactive bool) {
 	}
 
 	for _, item := range items {
-		// Parse output from details
 		var details map[string]interface{}
 		output := ""
 		if item.Details != "" {
@@ -142,7 +138,6 @@ func analyzeFromLog(limit int, filterStr, sinceStr string, interactive bool) {
 func analyzeEntry(entry storage.LogEntry, interactive bool) {
 	fmt.Printf("\n\033[31m×\033[0m %s \033[90m(exit %d)\033[0m\n", entry.Command, entry.ExitCode)
 
-	// Spinner
 	s := spinner.New(spinner.CharSets[14], 100*time.Millisecond)
 	s.Suffix = " 🧠 Analyzing failure..."
 	s.Start()

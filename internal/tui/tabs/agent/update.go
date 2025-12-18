@@ -67,12 +67,10 @@ func DefaultKeyMap() KeyMap {
 	}
 }
 
-// CommandExecutedMsg is sent when a command finishes executing
 type CommandExecutedMsg struct {
 	BlockID string
 }
 
-// AIResponseMsg is sent when AI responds
 type AIResponseMsg struct {
 	BlockID  string
 	Response string
@@ -84,7 +82,6 @@ func (m Model) Update(msg tea.Msg, keys KeyMap) (Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case CommandExecutedMsg:
-		// Command finished - state already updated by plugin
 		m.isExecuting = false
 		blocks := m.Blocks()
 		if len(blocks) > 0 {
@@ -98,7 +95,6 @@ func (m Model) Update(msg tea.Msg, keys KeyMap) (Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		if m.insertMode {
-			// Insert mode key handling
 			switch {
 			case key.Matches(msg, keys.Escape):
 				m = m.SetInsertMode(false)
@@ -112,22 +108,18 @@ func (m Model) Update(msg tea.Msg, keys KeyMap) (Model, tea.Cmd) {
 
 				m.input.SetValue("")
 
-				// Check if AI query
 				if executor.IsAIQuery(input) {
 					queryType, query := executor.ParseAIQuery(input)
 					return m.handleAIQuery(queryType, query)
 				}
 
-				// Execute as shell command through pipeline
 				m.isExecuting = true
 				return m, executeCommandPipeline(m.cmdPlugin, input)
 
 			case key.Matches(msg, keys.ToggleAI):
-				// Toggle could be stored in state
 				return m, nil
 			}
 
-			// Pass to text input
 			var cmd tea.Cmd
 			ti := m.input
 			ti, cmd = ti.Update(msg)
@@ -135,7 +127,6 @@ func (m Model) Update(msg tea.Msg, keys KeyMap) (Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 
 		} else {
-			// Normal mode key handling
 			switch {
 			case key.Matches(msg, keys.Insert):
 				m = m.SetInsertMode(true)
@@ -163,7 +154,6 @@ func (m Model) Update(msg tea.Msg, keys KeyMap) (Model, tea.Cmd) {
 				m = m.ClearBlocks()
 
 			case key.Matches(msg, keys.RunFix):
-				// Run the AI suggested fix
 				blocks := m.Blocks()
 				if m.selectedBlock >= 0 && m.selectedBlock < len(blocks) {
 					block := blocks[m.selectedBlock]
@@ -171,7 +161,6 @@ func (m Model) Update(msg tea.Msg, keys KeyMap) (Model, tea.Cmd) {
 						m.isExecuting = true
 						return m, executeCommandPipeline(m.cmdPlugin, block.AISuggestion)
 					}
-					// Check state suggestions
 					suggestions := m.State().GetSuggestionsForBlock(block.ID)
 					if len(suggestions) > 0 && suggestions[0].Command != "" {
 						m.isExecuting = true
@@ -180,7 +169,6 @@ func (m Model) Update(msg tea.Msg, keys KeyMap) (Model, tea.Cmd) {
 				}
 
 			case key.Matches(msg, keys.Dismiss):
-				// Dismiss AI fix
 				blocks := m.Blocks()
 				if m.selectedBlock >= 0 && m.selectedBlock < len(blocks) {
 					block := blocks[m.selectedBlock]
@@ -202,7 +190,6 @@ func (m Model) Update(msg tea.Msg, keys KeyMap) (Model, tea.Cmd) {
 				}
 
 			case msg.String() == "?":
-				// Quick enter insert mode with ?
 				m = m.SetInsertMode(true)
 				m.input.SetValue("?")
 				var cmd tea.Cmd
@@ -224,7 +211,6 @@ func (m Model) handleAIQuery(queryType, query string) (Model, tea.Cmd) {
 
 	switch queryType {
 	case "fix":
-		// Get last command block for context
 		blocks := m.Blocks()
 		for i := len(blocks) - 1; i >= 0; i-- {
 			if blocks[i].Type == pipeline.BlockTypeCommand && blocks[i].ExitCode != 0 {
@@ -254,7 +240,6 @@ func (m Model) handleAIQuery(queryType, query string) (Model, tea.Cmd) {
 	}
 }
 
-// Commands for async operations
 func executeCommandPipeline(cmdPlugin *command.Plugin, cmd string) tea.Cmd {
 	return func() tea.Msg {
 		if cmdPlugin != nil {

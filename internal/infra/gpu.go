@@ -18,7 +18,6 @@ type GPUStats struct {
 func GetGPUStats() GPUStats {
 	stats := GPUStats{}
 
-	// Query nvidia-smi for memory used and total
 	cmd := exec.Command("nvidia-smi", "--query-gpu=memory.used,memory.total", "--format=csv,noheader,nounits")
 	output, err := cmd.Output()
 	if err != nil {

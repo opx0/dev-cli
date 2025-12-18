@@ -31,7 +31,6 @@ type HistoryItem struct {
 }
 
 func SaveCommand(db *sql.DB, entry LogEntry) error {
-	// Convert timestamp string to unix int
 	ts, err := time.Parse(time.RFC3339, entry.Timestamp)
 	if err != nil {
 		ts = time.Now()
@@ -77,8 +76,6 @@ func GetRecentHistory(db *sql.DB, limit int) ([]HistoryItem, error) {
 }
 
 func SearchHistory(db *sql.DB, query string) ([]HistoryItem, error) {
-	// Simplified Search: Standard SQL LIKE
-	// Matches on command OR output (details)
 	sqlQuery := `SELECT id, timestamp, command, exit_code, duration_ms, directory, session_id, details 
 				 FROM history 
 				 WHERE command LIKE ? OR details LIKE ?
@@ -117,7 +114,6 @@ func GetFailures(db *sql.DB, opts QueryOpts) ([]HistoryItem, error) {
 	var args []interface{}
 	var whereClauses []string
 
-	// Always filter failures
 	whereClauses = append(whereClauses, "h.exit_code != 0")
 
 	if opts.Filter != "" {

@@ -59,19 +59,16 @@ func (m Model) Update(msg tea.Msg, keys KeyMap) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		if m.insertMode {
-			// Handle insert mode keys
 			switch {
 			case key.Matches(msg, keys.Escape):
 				m = m.SetInsertMode(false)
 				return m, nil
 
 			case key.Matches(msg, keys.Enter):
-				// Send message
 				value := m.input.Value()
 				if value != "" {
 					m = m.AddUserMessage(value)
 					m.input.SetValue("")
-					// In a real implementation, this would trigger AI response
 				}
 				return m, nil
 
@@ -80,7 +77,6 @@ func (m Model) Update(msg tea.Msg, keys KeyMap) (Model, tea.Cmd) {
 				return m, nil
 			}
 
-			// Pass to text input
 			var cmd tea.Cmd
 			ti := m.input
 			ti, cmd = ti.Update(msg)
@@ -88,7 +84,6 @@ func (m Model) Update(msg tea.Msg, keys KeyMap) (Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 
 		} else {
-			// Handle normal mode keys
 			switch {
 			case key.Matches(msg, keys.Insert):
 				m = m.SetInsertMode(true)

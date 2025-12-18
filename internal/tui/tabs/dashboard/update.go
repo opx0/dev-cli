@@ -69,14 +69,12 @@ func (m Model) Update(msg tea.Msg, keys KeyMap) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		if m.insertMode {
-			// Handle insert mode keys
 			switch {
 			case key.Matches(msg, keys.Escape):
 				m = m.SetInsertMode(false)
 				return m, nil
 
 			case key.Matches(msg, keys.Enter):
-				// Submit command
 				cmd := m.input.Value()
 				if cmd != "" {
 					m = m.AddOutputBlock(cmd)
@@ -85,7 +83,6 @@ func (m Model) Update(msg tea.Msg, keys KeyMap) (Model, tea.Cmd) {
 				return m, nil
 			}
 
-			// Pass to text input
 			var cmd tea.Cmd
 			ti := m.input
 			ti, cmd = ti.Update(msg)
@@ -93,13 +90,11 @@ func (m Model) Update(msg tea.Msg, keys KeyMap) (Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 
 		} else {
-			// Handle normal mode keys
 			switch {
 			case key.Matches(msg, keys.Insert), key.Matches(msg, keys.Enter):
 				m = m.SetInsertMode(true)
 
 			case key.Matches(msg, keys.Up):
-				// Navigate blocks up
 				if len(m.outputBlocks) > 0 {
 					if m.selectedBlock > 0 {
 						m.selectedBlock--
@@ -111,7 +106,6 @@ func (m Model) Update(msg tea.Msg, keys KeyMap) (Model, tea.Cmd) {
 				}
 
 			case key.Matches(msg, keys.Down):
-				// Navigate blocks down
 				if len(m.outputBlocks) > 0 {
 					if m.selectedBlock < len(m.outputBlocks)-1 {
 						m.selectedBlock++
@@ -121,58 +115,48 @@ func (m Model) Update(msg tea.Msg, keys KeyMap) (Model, tea.Cmd) {
 				}
 
 			case key.Matches(msg, keys.PrevBlock):
-				// Jump to previous block (double tap support)
 				if m.selectedBlock > 0 {
 					m.selectedBlock--
 				}
 
 			case key.Matches(msg, keys.NextBlock):
-				// Jump to next block (double tap support)
 				if m.selectedBlock < len(m.outputBlocks)-1 {
 					m.selectedBlock++
 				}
 
 			case key.Matches(msg, keys.Fold):
-				// Toggle fold on selected block
 				if m.selectedBlock >= 0 && m.selectedBlock < len(m.outputBlocks) {
 					m = m.ToggleFoldBlock(m.selectedBlock)
 				}
 
 			case key.Matches(msg, keys.Actions):
-				// Toggle action menu
 				m.showingActions = !m.showingActions
 
 			case key.Matches(msg, keys.Clear):
-				// Clear output blocks
 				m.outputBlocks = []OutputBlock{}
 				m.selectedBlock = -1
 				m = m.ClearViewport()
 
 			case msg.String() == "g":
-				// Go to first block
 				if len(m.outputBlocks) > 0 {
 					m.selectedBlock = 0
 				}
 
 			case msg.String() == "G":
-				// Go to last block
 				if len(m.outputBlocks) > 0 {
 					m.selectedBlock = len(m.outputBlocks) - 1
 				}
 			}
 
-			// Handle action menu navigation
 			if m.showingActions {
 				switch msg.String() {
 				case "r":
-					// Retry command
 					if m.selectedBlock >= 0 && m.selectedBlock < len(m.outputBlocks) {
 						cmd := m.outputBlocks[m.selectedBlock].Command
 						m = m.AddOutputBlock(cmd)
 					}
 					m.showingActions = false
 				case "c":
-					// Clear
 					m.outputBlocks = []OutputBlock{}
 					m.selectedBlock = -1
 					m.showingActions = false

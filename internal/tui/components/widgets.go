@@ -9,7 +9,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// HeaderWidget renders a compact status widget for the header bar
 type HeaderWidget struct {
 	Icon    string
 	Label   string
@@ -63,7 +62,6 @@ func (w HeaderWidget) Render() string {
 	return style.Render(fmt.Sprintf("%s %s", icon, w.Label))
 }
 
-// HeaderWidgetBar renders multiple widgets in a horizontal bar
 type HeaderWidgetBar struct {
 	Widgets []HeaderWidget
 	Width   int
@@ -88,11 +86,10 @@ func (b HeaderWidgetBar) Render() string {
 	return strings.Join(rendered, separator)
 }
 
-// Badge renders a notification or status badge
 type Badge struct {
 	Label string
 	Count int
-	Type  string // "success", "error", "warn", "info", ""
+	Type  string
 }
 
 func NewBadge(label string) Badge {
@@ -130,7 +127,6 @@ func (b Badge) Render() string {
 	return style.Render(b.Label)
 }
 
-// ActionMenu renders a popup action menu
 type ActionMenu struct {
 	Title    string
 	Items    []ActionMenuItem
@@ -188,7 +184,6 @@ func (m ActionMenu) Render() string {
 	return theme.ActionMenu.Width(m.Width).Render(content.String())
 }
 
-// Sparkline renders a mini bar chart
 type Sparkline struct {
 	Values    []int
 	Max       int
@@ -221,7 +216,6 @@ func (s Sparkline) Render() string {
 		return strings.Repeat("░", s.Width)
 	}
 
-	// Take last N values that fit in width
 	values := s.Values
 	if len(values) > s.Width {
 		values = values[len(values)-s.Width:]
@@ -236,7 +230,6 @@ func (s Sparkline) Render() string {
 			continue
 		}
 
-		// Normalize to 0-7 range
 		normalized := (v * 7) / s.Max
 		if normalized > 7 {
 			normalized = 7
@@ -245,7 +238,6 @@ func (s Sparkline) Render() string {
 			normalized = 0
 		}
 
-		// Color based on value
 		var style lipgloss.Style
 		ratio := float64(v) / float64(s.Max)
 		if ratio > 0.8 {
@@ -259,7 +251,6 @@ func (s Sparkline) Render() string {
 		result.WriteString(style.Render(string(bars[normalized])))
 	}
 
-	// Pad with empty if needed
 	for i := len(values); i < s.Width; i++ {
 		result.WriteString(lipgloss.NewStyle().Foreground(theme.Surface1).Render("░"))
 	}
@@ -284,7 +275,6 @@ func (s Sparkline) Render() string {
 	return sparkline
 }
 
-// ProgressBar renders a horizontal progress bar
 type ProgressBar struct {
 	Value   int
 	Max     int
@@ -367,7 +357,6 @@ func (p ProgressBar) Render() string {
 	return result
 }
 
-// OutputBlock represents a single command output block (warp-style)
 type OutputBlock struct {
 	Command   string
 	Output    string
@@ -420,7 +409,6 @@ func (b OutputBlock) Render(width int) string {
 		style = theme.OutputBlock
 	}
 
-	// Command header
 	cmdStyle := theme.Prompt
 	tsStyle := theme.Dim
 
@@ -439,7 +427,6 @@ func (b OutputBlock) Render(width int) string {
 		header.WriteString(exitStyle.Render(fmt.Sprintf("✗ %d", b.ExitCode)))
 	}
 
-	// Fold indicator
 	if b.Folded {
 		foldStyle := lipgloss.NewStyle().Foreground(theme.Overlay0)
 		header.WriteString("  ")
@@ -451,7 +438,6 @@ func (b OutputBlock) Render(width int) string {
 
 	if !b.Folded && b.Output != "" {
 		content.WriteString("\n")
-		// Limit output lines
 		lines := strings.Split(b.Output, "\n")
 		maxLines := 15
 		if len(lines) > maxLines {
@@ -468,16 +454,14 @@ func (b OutputBlock) Render(width int) string {
 	return style.Width(width - 2).Render(content.String())
 }
 
-// LogLine renders a log line with level highlighting
 type LogLine struct {
 	Content string
-	Level   string // "ERROR", "WARN", "INFO", "DEBUG"
+	Level   string
 }
 
 func NewLogLine(content string) LogLine {
 	line := LogLine{Content: content}
 
-	// Auto-detect level
 	upperContent := strings.ToUpper(content)
 	if strings.Contains(upperContent, "ERROR") || strings.Contains(upperContent, "ERR") {
 		line.Level = "ERROR"
@@ -510,7 +494,6 @@ func (l LogLine) Render() string {
 	return style.Render(l.Content)
 }
 
-// ContextBadge shows AI context awareness
 type ContextBadge struct {
 	Commands   int
 	Containers int

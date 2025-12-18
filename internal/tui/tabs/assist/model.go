@@ -7,7 +7,6 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 )
 
-// ChatMessage represents a single message in the chat
 type ChatMessage struct {
 	Role    string // "user" or "assistant"
 	Content string
@@ -20,17 +19,14 @@ type Model struct {
 	viewport viewport.Model
 	input    textinput.Model
 
-	// Chat state
 	messages    []ChatMessage
 	chatHistory []string // Legacy compatibility
 	aiClient    *llm.HybridClient
 	aiMode      string // "local" or "cloud"
 
-	// UI state
 	insertMode bool
 	isLoading  bool
 
-	// Context awareness
 	recentCommands int
 	containerCount int
 	errorCount     int
@@ -88,7 +84,6 @@ func (m Model) ToggleAIMode() Model {
 	return m
 }
 
-// AddMessage adds a new message to the chat
 func (m Model) AddMessage(role, content string) Model {
 	msg := ChatMessage{
 		Role:    role,
@@ -176,7 +171,6 @@ func (m Model) SetLoading(loading bool) Model {
 	return m
 }
 
-// Context awareness setters
 func (m Model) SetRecentCommands(count int) Model {
 	m.recentCommands = count
 	return m
@@ -204,7 +198,6 @@ func (m Model) ErrorCount() int {
 	return m.errorCount
 }
 
-// ClearMessages clears all messages
 func (m Model) ClearMessages() Model {
 	m.messages = []ChatMessage{}
 	m.chatHistory = []string{}

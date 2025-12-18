@@ -6,7 +6,6 @@ import (
 	"strings"
 )
 
-// GitStatus holds git repository status
 type GitStatus struct {
 	IsRepo    bool
 	Branch    string
@@ -18,24 +17,20 @@ type GitStatus struct {
 	Untracked int
 }
 
-// GetGitStatus returns the git status for the current directory
 func GetGitStatus() GitStatus {
 	status := GitStatus{}
 
-	// Check if in a git repo
 	cmd := exec.Command("git", "rev-parse", "--is-inside-work-tree")
 	if err := cmd.Run(); err != nil {
 		return status
 	}
 	status.IsRepo = true
 
-	// Get branch name
 	cmd = exec.Command("git", "branch", "--show-current")
 	if out, err := cmd.Output(); err == nil {
 		status.Branch = strings.TrimSpace(string(out))
 	}
 
-	// Get ahead/behind
 	cmd = exec.Command("git", "rev-list", "--left-right", "--count", "HEAD...@{upstream}")
 	if out, err := cmd.Output(); err == nil {
 		parts := strings.Fields(string(out))
@@ -45,7 +40,6 @@ func GetGitStatus() GitStatus {
 		}
 	}
 
-	// Get file status counts
 	cmd = exec.Command("git", "status", "--porcelain")
 	if out, err := cmd.Output(); err == nil {
 		lines := strings.Split(string(out), "\n")
@@ -70,7 +64,6 @@ func GetGitStatus() GitStatus {
 	return status
 }
 
-// Summary returns a short summary string like "main ⊕ 21 • +10 -5"
 func (g GitStatus) Summary() string {
 	if !g.IsRepo {
 		return ""

@@ -77,24 +77,18 @@ func InitialModel() Model {
 	cwd, _ := os.Getwd()
 	aiClient := llm.NewHybridClient()
 
-	// Create pipeline and register plugins
 	pipe := pipeline.NewPipeline()
 
-	// Register command plugin
 	cmdPlugin := command.New()
 	pipe.Register(cmdPlugin)
 
-	// Register AI plugin
 	aiPlug := ai.New(aiClient)
 	pipe.Register(aiPlug)
 
-	// Start the pipeline
 	pipe.Start()
 
-	// Set initial state
 	pipe.State().SetCwd(cwd)
 
-	// 3 tabs: Agent, Containers, History
 	tabBar := components.NewTabBar([]components.TabItem{
 		{Icon: "◈", Label: "Agent"},
 		{Icon: "⬢", Label: "Containers"},
@@ -150,7 +144,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.containers = m.containers.SetDockerHealth(msg.health)
 		if msg.health.Available {
 			m.state = StateMain
-			// Fetch logs for first container if available
 			if len(msg.health.Containers) > 0 {
 				cmds = append(cmds, fetchContainerLogs(msg.health.Containers[0].ID))
 			}
@@ -163,7 +156,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.agent = m.agent.SetGPUStats(msg.stats)
 
 	case serviceHealthMsg:
-		// Services handled by pipeline (no longer needed in agent model)
 		_ = msg.services
 
 	case historyLoadedMsg:
@@ -183,7 +175,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.spinner, cmd = m.spinner.Update(msg)
 		cmds = append(cmds, cmd)
 
-		// Only check status every 10 ticks to reduce flickering
 		m.tickCount++
 		if m.tickCount >= 10 {
 			m.tickCount = 0
@@ -191,14 +182,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case agent.CommandExecutedMsg:
-		// Forward to agent
 		var cmd tea.Cmd
 		m.agent, cmd = m.agent.Update(msg, agent.DefaultKeyMap())
 		m.mode = m.getModeFromTab()
 		cmds = append(cmds, cmd)
 
 	case agent.AIResponseMsg:
-		// Forward to agent
 		var cmd tea.Cmd
 		m.agent, cmd = m.agent.Update(msg, agent.DefaultKeyMap())
 		cmds = append(cmds, cmd)
@@ -215,7 +204,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.activeTab = TabAgent
 			case "2":
 				m.activeTab = TabContainers
-				// Fetch logs when switching to containers tab
 				if m.containers.SelectedContainer() != nil {
 					cmds = append(cmds, fetchContainerLogs(m.containers.SelectedContainer().ID))
 				}
@@ -239,7 +227,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.containers, cmd = m.containers.Update(msg, monitor.DefaultKeyMap())
 			cmds = append(cmds, cmd)
 
-			// Fetch logs when container selection changes
 			if m.containers.ContainerCursor() != oldCursor {
 				if container := m.containers.SelectedContainer(); container != nil {
 					cmds = append(cmds, fetchContainerLogs(container.ID))
@@ -352,7 +339,6 @@ func (m Model) getFocusLabel() string {
 	return "main"
 }
 
-// Messages
 type containerLogsMsg struct {
 	containerID string
 	lines       []string

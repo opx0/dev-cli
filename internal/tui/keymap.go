@@ -68,7 +68,6 @@ var GlobalKeys = GlobalKeyMap{
 	),
 }
 
-// AgentKeyMap for Agent tab
 type AgentKeyMap struct {
 	GlobalKeyMap
 	Fold     key.Binding
@@ -110,7 +109,6 @@ var AgentKeys = AgentKeyMap{
 	),
 }
 
-// MonitorKeyMap for Containers tab
 type MonitorKeyMap struct {
 	GlobalKeyMap
 	Follow     key.Binding
@@ -152,7 +150,6 @@ var MonitorKeys = MonitorKeyMap{
 	),
 }
 
-// HistoryKeyMap for History tab
 type HistoryKeyMap struct {
 	GlobalKeyMap
 	Details key.Binding

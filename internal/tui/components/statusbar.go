@@ -31,7 +31,6 @@ func (s StatusBar) SetWidth(w int) StatusBar {
 func (s StatusBar) Render(keys help.KeyMap, focusLabel string) string {
 	helpView := s.help.View(keys)
 
-	// Focus indicator with improved styling
 	focusStyle := lipgloss.NewStyle().
 		Foreground(theme.Lavender).
 		Bold(true)
@@ -48,7 +47,6 @@ func (s StatusBar) Render(keys help.KeyMap, focusLabel string) string {
 func (s StatusBar) RenderWithInfo(keys help.KeyMap, focusLabel string, info string) string {
 	helpView := s.help.View(keys)
 
-	// Focus indicator
 	focusStyle := lipgloss.NewStyle().
 		Foreground(theme.Lavender).
 		Bold(true)
@@ -58,7 +56,6 @@ func (s StatusBar) RenderWithInfo(keys help.KeyMap, focusLabel string, info stri
 
 	focusIndicator := bracketStyle.Render(" │ [") + focusStyle.Render(focusLabel) + bracketStyle.Render("]")
 
-	// Add info if provided
 	infoStr := ""
 	if info != "" {
 		infoStyle := lipgloss.NewStyle().Foreground(theme.Overlay0)

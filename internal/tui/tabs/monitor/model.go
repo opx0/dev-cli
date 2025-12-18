@@ -14,7 +14,6 @@ const (
 	FocusStats
 )
 
-// ContainerStats holds live metrics for sparklines
 type ContainerStats struct {
 	CPUHistory []int
 	MemUsed    int
@@ -39,7 +38,6 @@ type Model struct {
 	wrapMode         bool
 	maxLineWidth     int
 
-	// New features
 	followMode      bool
 	logLevelFilter  string // "", "ERROR", "WARN", "INFO"
 	showingActions  bool
@@ -60,7 +58,6 @@ func (m Model) SetSize(w, h int) Model {
 	m.width = w
 	m.height = h
 
-	// 3-panel layout dimensions
 	listWidth := 28
 	if w < 100 {
 		listWidth = 24
@@ -185,7 +182,6 @@ func (m Model) SelectedContainer() *infra.ContainerInfo {
 	return nil
 }
 
-// New methods for enhanced features
 
 func (m Model) FollowMode() bool {
 	return m.followMode

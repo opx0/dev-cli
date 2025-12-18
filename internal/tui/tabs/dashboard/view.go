@@ -12,7 +12,6 @@ import (
 )
 
 func (m Model) View() string {
-	// Full-width layout with header widgets bar
 	contentWidth := m.width - 2
 	if contentWidth < 40 {
 		contentWidth = 40
@@ -20,27 +19,22 @@ func (m Model) View() string {
 
 	var content strings.Builder
 
-	// Header bar with widgets
 	content.WriteString(m.renderHeaderBar(contentWidth) + "\n")
 
-	// Main content area
 	content.WriteString(m.renderOutputArea(contentWidth, m.height-8) + "\n")
 
-	// Input area at bottom
 	content.WriteString(m.renderInputArea(contentWidth))
 
 	return content.String()
 }
 
 func (m Model) renderHeaderBar(width int) string {
-	// Title
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(theme.Lavender)
 
 	title := titleStyle.Render("⌘ Command Center")
 
-	// CWD display
 	cwdStyle := lipgloss.NewStyle().
 		Foreground(theme.Overlay0).
 		Italic(true)
@@ -52,11 +46,9 @@ func (m Model) renderHeaderBar(width int) string {
 
 	cwd := cwdStyle.Render(" " + cwdDisplay)
 
-	// Header widgets
 	widgetBar := components.NewHeaderWidgetBar(m.HeaderWidgets()...).SetWidth(width)
 	widgetsStr := widgetBar.Render()
 
-	// Calculate spacing
 	leftSide := title + cwd
 	leftWidth := lipgloss.Width(leftSide)
 	widgetsWidth := lipgloss.Width(widgetsStr)
@@ -91,7 +83,6 @@ func (m Model) renderOutputArea(width, height int) string {
 	var content strings.Builder
 
 	if len(m.outputBlocks) == 0 {
-		// Empty state
 		emptyStyle := lipgloss.NewStyle().
 			Foreground(theme.Overlay0).
 			Italic(true).
@@ -107,7 +98,6 @@ Try: docker ps, npm test, git status`
 
 		content.WriteString(emptyStyle.Render(welcomeMsg))
 	} else {
-		// Render output blocks
 		blockWidth := width - 6
 		for i, block := range m.outputBlocks {
 			blockComp := components.NewOutputBlock(block.Command).
@@ -121,7 +111,6 @@ Try: docker ps, npm test, git status`
 		}
 	}
 
-	// If we have viewport content from legacy, show it
 	viewportContent := m.viewport.View()
 	if viewportContent != "" && len(m.outputBlocks) == 0 {
 		content.WriteString(viewportContent)
@@ -144,7 +133,6 @@ func (m Model) renderInputArea(width int) string {
 	promptStyle := theme.Prompt
 	prompt := promptStyle.Render("❯ ")
 
-	// Mode hint
 	hintStyle := lipgloss.NewStyle().
 		Foreground(theme.Overlay0).
 		Italic(true)
@@ -158,7 +146,6 @@ func (m Model) renderInputArea(width int) string {
 
 	inputRow := prompt + m.input.View()
 
-	// Calculate space for hint
 	inputWidth := lipgloss.Width(inputRow)
 	hintWidth := lipgloss.Width(hint)
 	spacerWidth := width - inputWidth - hintWidth - 4
@@ -170,7 +157,6 @@ func (m Model) renderInputArea(width int) string {
 	return inputStyle.Render(inputRow + spacer + hint)
 }
 
-// RenderActionMenu renders the context action menu popup
 func (m Model) RenderActionMenu() string {
 	if !m.showingActions {
 		return ""
@@ -178,7 +164,6 @@ func (m Model) RenderActionMenu() string {
 
 	var items []components.ActionMenuItem
 
-	// Context-aware actions
 	if len(m.outputBlocks) > 0 && m.selectedBlock >= 0 {
 		block := m.outputBlocks[m.selectedBlock]
 		if block.ExitCode != 0 {
@@ -188,19 +173,16 @@ func (m Model) RenderActionMenu() string {
 		}
 	}
 
-	// Docker actions
 	if m.dockerHealth.Available && len(m.dockerHealth.Containers) > 0 {
 		items = append(items, components.ActionMenuItem{Key: "l", Label: "View logs"})
 		items = append(items, components.ActionMenuItem{Key: "s", Label: "Shell into container"})
 	}
 
-	// General actions
 	items = append(items, components.ActionMenuItem{Key: "c", Label: "Clear screen"})
 	items = append(items, components.ActionMenuItem{Key: "h", Label: "View history"})
 
 	menu := components.NewActionMenu("Quick Actions", items...)
 
-	// Position in center
 	menuStr := menu.Render()
 	menuWidth := lipgloss.Width(menuStr)
 	menuHeight := lipgloss.Height(menuStr)
@@ -214,7 +196,6 @@ func (m Model) RenderActionMenu() string {
 		Render(menuStr)
 }
 
-// StatusInfo returns info for the status bar
 func (m Model) StatusInfo() string {
 	var info []string
 

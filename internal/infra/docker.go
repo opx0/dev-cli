@@ -82,7 +82,6 @@ func (d *DockerClient) CheckHealth(ctx context.Context) DockerHealth {
 	return health
 }
 
-// GetContainerLogs fetches logs from a container
 func (d *DockerClient) GetContainerLogs(ctx context.Context, containerID string, tail int) ([]string, error) {
 	options := container.LogsOptions{
 		ShowStdout: true,
@@ -97,16 +96,13 @@ func (d *DockerClient) GetContainerLogs(ctx context.Context, containerID string,
 	}
 	defer reader.Close()
 
-	// Read logs
 	var lines []string
 	buf := make([]byte, 8192)
 	for {
 		n, err := reader.Read(buf)
 		if n > 0 {
-			// Docker logs have an 8-byte header per line
 			data := buf[:n]
 			for len(data) > 8 {
-				// Skip header (8 bytes)
 				lineEnd := 8
 				for lineEnd < len(data) && data[lineEnd] != '\n' {
 					lineEnd++

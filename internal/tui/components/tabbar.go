@@ -14,7 +14,7 @@ type TabBar struct {
 	Width      int
 	ShowMode   bool
 	InsertMode bool
-	Badges     map[int]int // tab index -> notification count
+	Badges     map[int]int
 }
 
 type TabItem struct {
@@ -59,7 +59,6 @@ func (t TabBar) Render() string {
 	var renderedTabs []string
 
 	for i, tab := range t.Tabs {
-		// Determine style based on active state
 		var style lipgloss.Style
 		if i == t.ActiveTab {
 			style = theme.ActiveTab
@@ -67,10 +66,8 @@ func (t TabBar) Render() string {
 			style = theme.Tab
 		}
 
-		// Build tab content
 		content := tab.Icon + " " + tab.Label
 
-		// Add badge if present
 		if count, ok := t.Badges[i]; ok && count > 0 {
 			badgeStyle := lipgloss.NewStyle().
 				Foreground(theme.Crust).
@@ -82,11 +79,9 @@ func (t TabBar) Render() string {
 		renderedTabs = append(renderedTabs, style.Render(content))
 	}
 
-	// Join tabs with subtle separator
 	separator := lipgloss.NewStyle().Foreground(theme.Surface2).Render("│")
 	row := strings.Join(renderedTabs, separator)
 
-	// Mode indicator
 	modeStr := ""
 	if t.ShowMode {
 		if t.InsertMode {
@@ -96,14 +91,12 @@ func (t TabBar) Render() string {
 		}
 	}
 
-	// Calculate spacing
 	spacer := ""
 	spacerWidth := t.Width - lipgloss.Width(row) - lipgloss.Width(modeStr) - 2
 	if spacerWidth > 0 {
 		spacer = strings.Repeat(" ", spacerWidth)
 	}
 
-	// Build final bar with background
 	barStyle := lipgloss.NewStyle().
 		Background(theme.Mantle).
 		Width(t.Width)

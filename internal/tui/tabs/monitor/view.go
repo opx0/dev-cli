@@ -12,7 +12,6 @@ import (
 )
 
 func (m Model) View() string {
-	// 3-panel layout: list (left) + logs (right) + stats (bottom-left)
 	listWidth := 28
 	if m.width < 100 {
 		listWidth = 24
@@ -31,15 +30,12 @@ func (m Model) View() string {
 		listHeight = 10
 	}
 
-	// Left column: container list + stats
 	containerList := m.renderContainerList(listWidth, listHeight)
 	statsPanel := m.renderStatsPanel(listWidth, statsHeight)
 	leftColumn := lipgloss.JoinVertical(lipgloss.Left, containerList, statsPanel)
 
-	// Right column: logs
 	logsPanel := m.renderLogViewport(logWidth, panelHeight)
 
-	// Action menu overlay
 	if m.showingActions {
 		menu := m.renderActionMenu()
 		return lipgloss.JoinHorizontal(lipgloss.Top, leftColumn, logsPanel) + "\n" + menu
@@ -162,7 +158,6 @@ func (m Model) renderStatsPanel(width, height int) string {
 
 	stats := m.GetSelectedContainerStats()
 
-	// CPU sparkline
 	labelStyle := lipgloss.NewStyle().Foreground(theme.Overlay0).Width(4)
 	content.WriteString(labelStyle.Render("CPU "))
 
@@ -182,7 +177,6 @@ func (m Model) renderStatsPanel(width, height int) string {
 	}
 	content.WriteString("\n")
 
-	// Memory bar
 	content.WriteString(labelStyle.Render("MEM "))
 	if stats.MemTotal > 0 {
 		memBar := components.NewProgressBar(stats.MemUsed, stats.MemTotal).
@@ -194,7 +188,6 @@ func (m Model) renderStatsPanel(width, height int) string {
 	}
 	content.WriteString("\n")
 
-	// Network I/O
 	content.WriteString(labelStyle.Render("NET "))
 	netStyle := lipgloss.NewStyle().Foreground(theme.Overlay0)
 	if stats.NetIn > 0 || stats.NetOut > 0 {
@@ -232,7 +225,6 @@ func (m Model) renderLogViewport(width, height int) string {
 	if m.dockerHealth.Available && len(m.dockerHealth.Containers) > 0 {
 		if m.containerCursor >= 0 && m.containerCursor < len(m.dockerHealth.Containers) {
 			containerName := m.dockerHealth.Containers[m.containerCursor].Name
-			// Truncate container name if too long
 			if len(containerName) > 15 {
 				containerName = containerName[:12] + "…"
 			}
@@ -240,7 +232,6 @@ func (m Model) renderLogViewport(width, height int) string {
 		}
 	}
 
-	// Follow mode indicator
 	if m.followMode {
 		followBadge := lipgloss.NewStyle().
 			Background(theme.Green).
@@ -250,7 +241,6 @@ func (m Model) renderLogViewport(width, height int) string {
 		header += " " + followBadge
 	}
 
-	// Log level filter indicator
 	if m.logLevelFilter != "" {
 		filterBadge := lipgloss.NewStyle().
 			Background(theme.Surface0).
@@ -272,19 +262,15 @@ func (m Model) renderLogViewport(width, height int) string {
 
 	var displayLines []string
 	if len(m.logLines) > 0 {
-		// Filter lines
 		filteredLines := m.filterLogLines()
 
-		// Limit to last N lines that fit
 		startIdx := 0
 		if len(filteredLines) > contentHeight {
 			startIdx = len(filteredLines) - contentHeight
 		}
 		visibleLines := filteredLines[startIdx:]
 
-		// Process each line
 		for _, line := range visibleLines {
-			// Truncate line to fit width
 			truncatedLine := truncateLine(line, contentWidth)
 			logLine := components.NewLogLine(truncatedLine)
 			displayLines = append(displayLines, logLine.Render())
@@ -301,13 +287,11 @@ func (m Model) renderLogViewport(width, height int) string {
 	return panelStyle.Render(contentBuilder.String())
 }
 
-// truncateLine truncates a line to fit within maxWidth
 func truncateLine(line string, maxWidth int) string {
 	if maxWidth <= 0 {
 		return ""
 	}
 
-	// Handle ANSI codes - simplified approach: just truncate by rune count
 	runes := []rune(line)
 	if len(runes) <= maxWidth {
 		return line
