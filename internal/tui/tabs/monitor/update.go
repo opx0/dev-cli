@@ -108,7 +108,7 @@ func (m Model) Update(msg tea.Msg, keys KeyMap) (Model, tea.Cmd) {
 					}
 				}
 			case FocusLogs:
-				m.viewport.LineUp(1)
+				m.viewport.ScrollUp(1)
 				m.followMode = false
 			}
 
@@ -119,7 +119,7 @@ func (m Model) Update(msg tea.Msg, keys KeyMap) (Model, tea.Cmd) {
 					m.containerCursor = (m.containerCursor + 1) % len(m.dockerHealth.Containers)
 				}
 			case FocusLogs:
-				m.viewport.LineDown(1)
+				m.viewport.ScrollDown(1)
 			}
 
 		case key.Matches(msg, keys.ScrollLeft):

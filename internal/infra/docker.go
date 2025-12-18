@@ -3,6 +3,7 @@ package infra
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
@@ -26,6 +27,60 @@ type DockerHealth struct {
 
 type DockerClient struct {
 	cli *client.Client
+}
+
+// Singleton pool for Docker client reuse
+var (
+	sharedDockerClient *DockerClient
+	dockerClientOnce   sync.Once
+	dockerClientErr    error
+	dockerClientMu     sync.RWMutex
+)
+
+// GetSharedDockerClient returns a shared Docker client instance.
+// This reuses the connection instead of creating a new one per request.
+func GetSharedDockerClient() (*DockerClient, error) {
+	dockerClientOnce.Do(func() {
+		sharedDockerClient, dockerClientErr = NewDockerClient()
+	})
+
+	if dockerClientErr != nil {
+		return nil, dockerClientErr
+	}
+
+	// Verify the client is still valid
+	dockerClientMu.RLock()
+	c := sharedDockerClient
+	dockerClientMu.RUnlock()
+
+	if c != nil && c.cli != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if _, err := c.cli.Ping(ctx); err == nil {
+			return c, nil
+		}
+		// Client is stale, recreate
+		dockerClientMu.Lock()
+		if sharedDockerClient != nil {
+			sharedDockerClient.Close()
+		}
+		sharedDockerClient, dockerClientErr = NewDockerClient()
+		dockerClientMu.Unlock()
+	}
+
+	return sharedDockerClient, dockerClientErr
+}
+
+// ResetSharedDockerClient closes and resets the shared client (for testing)
+func ResetSharedDockerClient() {
+	dockerClientMu.Lock()
+	defer dockerClientMu.Unlock()
+	if sharedDockerClient != nil {
+		sharedDockerClient.Close()
+		sharedDockerClient = nil
+	}
+	dockerClientOnce = sync.Once{}
+	dockerClientErr = nil
 }
 
 func NewDockerClient() (*DockerClient, error) {

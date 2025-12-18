@@ -157,6 +157,21 @@ func analyzeEntry(entry storage.LogEntry, interactive bool) {
 		fmt.Printf("  \033[32m$\033[0m %s\n", result.Fix)
 
 		if interactive {
+			dangerousPatterns := []string{"rm -rf", "rm -r /", "dd if=", "mkfs", "> /dev/", "chmod 777", ":(){ :|:& };:"}
+			for _, pattern := range dangerousPatterns {
+				if strings.Contains(result.Fix, pattern) {
+					fmt.Fprintf(os.Stderr, "   \033[31m⚠ WARNING: Potentially dangerous command detected (%s)\033[0m\n", pattern)
+					fmt.Print("   This command could cause data loss. Are you SURE? (yes/no): ")
+					reader := bufio.NewReader(os.Stdin)
+					response, _ := reader.ReadString('\n')
+					if strings.TrimSpace(strings.ToLower(response)) != "yes" {
+						fmt.Println("   Aborted.")
+						return
+					}
+					break
+				}
+			}
+
 			fmt.Print("   [Run Fix?] (y/n): ")
 			reader := bufio.NewReader(os.Stdin)
 			response, _ := reader.ReadString('\n')

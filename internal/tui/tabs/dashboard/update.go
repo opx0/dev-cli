@@ -102,7 +102,7 @@ func (m Model) Update(msg tea.Msg, keys KeyMap) (Model, tea.Cmd) {
 						m.selectedBlock = len(m.outputBlocks) - 1
 					}
 				} else {
-					m.viewport.LineUp(1)
+					m.viewport.ScrollUp(1)
 				}
 
 			case key.Matches(msg, keys.Down):
@@ -111,7 +111,7 @@ func (m Model) Update(msg tea.Msg, keys KeyMap) (Model, tea.Cmd) {
 						m.selectedBlock++
 					}
 				} else {
-					m.viewport.LineDown(1)
+					m.viewport.ScrollDown(1)
 				}
 
 			case key.Matches(msg, keys.PrevBlock):

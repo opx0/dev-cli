@@ -61,6 +61,9 @@ func migrate(db *sql.DB) error {
 		details     TEXT
 	);
 
+	CREATE INDEX IF NOT EXISTS idx_history_timestamp ON history(timestamp);
+	CREATE INDEX IF NOT EXISTS idx_history_exit_code ON history(exit_code);
+	CREATE INDEX IF NOT EXISTS idx_history_session ON history(session_id);
 	`
 
 	_, err := db.Exec(schema)

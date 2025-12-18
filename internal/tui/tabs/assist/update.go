@@ -92,10 +92,10 @@ func (m Model) Update(msg tea.Msg, keys KeyMap) (Model, tea.Cmd) {
 				m = m.ToggleAIMode()
 
 			case key.Matches(msg, keys.Up):
-				m.viewport.LineUp(1)
+				m.viewport.ScrollUp(1)
 
 			case key.Matches(msg, keys.Down):
-				m.viewport.LineDown(1)
+				m.viewport.ScrollDown(1)
 
 			case key.Matches(msg, keys.Clear):
 				m = m.ClearMessages()

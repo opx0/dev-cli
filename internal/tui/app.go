@@ -62,11 +62,10 @@ type Model struct {
 	spinner   spinner.Model
 	help      help.Model
 
-	db           *sql.DB
-	aiClient     *llm.HybridClient
-	dockerClient *infra.DockerClient
-	pipe         *pipeline.Pipeline
-	cwd          string
+	db       *sql.DB
+	aiClient *llm.HybridClient
+	pipe     *pipeline.Pipeline
+	cwd      string
 }
 
 func InitialModel() Model {
@@ -347,11 +346,11 @@ type containerLogsMsg struct {
 
 func fetchContainerLogs(containerID string) tea.Cmd {
 	return func() tea.Msg {
-		dockerClient, err := infra.NewDockerClient()
+		dockerClient, err := infra.GetSharedDockerClient()
 		if err != nil {
 			return containerLogsMsg{containerID: containerID, err: err}
 		}
-		defer dockerClient.Close()
+		// Don't close shared client
 
 		lines, err := dockerClient.GetContainerLogs(context.Background(), containerID, 100)
 		return containerLogsMsg{
@@ -363,7 +362,7 @@ func fetchContainerLogs(containerID string) tea.Cmd {
 }
 
 func checkDockerHealth() tea.Msg {
-	dockerClient, err := infra.NewDockerClient()
+	dockerClient, err := infra.GetSharedDockerClient()
 	if err != nil {
 		return dockerHealthMsg{
 			health: infra.DockerHealth{
@@ -372,7 +371,7 @@ func checkDockerHealth() tea.Msg {
 			},
 		}
 	}
-	defer dockerClient.Close()
+	// Don't close shared client
 
 	health := dockerClient.CheckHealth(context.Background())
 	return dockerHealthMsg{health: health}

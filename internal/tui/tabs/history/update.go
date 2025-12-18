@@ -64,7 +64,7 @@ func (m Model) Update(msg tea.Msg, keys KeyMap) (Model, tea.Cmd) {
 				cmds = append(cmds, cmd)
 				m.updateDetailsContent()
 			} else {
-				m.viewport.LineUp(1)
+				m.viewport.ScrollUp(1)
 			}
 
 		case key.Matches(msg, keys.Down):
@@ -74,7 +74,7 @@ func (m Model) Update(msg tea.Msg, keys KeyMap) (Model, tea.Cmd) {
 				cmds = append(cmds, cmd)
 				m.updateDetailsContent()
 			} else {
-				m.viewport.LineDown(1)
+				m.viewport.ScrollDown(1)
 			}
 
 		case key.Matches(msg, keys.PageUp):
@@ -82,7 +82,7 @@ func (m Model) Update(msg tea.Msg, keys KeyMap) (Model, tea.Cmd) {
 				m.list.Paginator.PrevPage()
 				m.updateDetailsContent()
 			} else {
-				m.viewport.HalfViewUp()
+				m.viewport.HalfPageUp()
 			}
 
 		case key.Matches(msg, keys.PageDown):
@@ -90,7 +90,7 @@ func (m Model) Update(msg tea.Msg, keys KeyMap) (Model, tea.Cmd) {
 				m.list.Paginator.NextPage()
 				m.updateDetailsContent()
 			} else {
-				m.viewport.HalfViewDown()
+				m.viewport.HalfPageDown()
 			}
 
 		case key.Matches(msg, keys.Details):

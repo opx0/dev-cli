@@ -173,7 +173,7 @@ func (m Model) formatDetails(item storage.HistoryItem) string {
 	codeStyle := lipgloss.NewStyle().Foreground(theme.Lavender).Background(theme.Surface0).Padding(0, 1)
 	wrapStyle := lipgloss.NewStyle().Foreground(theme.Text).Width(m.viewport.Width - 2)
 
-	exitStyle := valueStyle.Copy()
+	exitStyle := valueStyle
 	if item.ExitCode != 0 {
 		exitStyle = exitStyle.Foreground(theme.Red).Bold(true)
 	} else {

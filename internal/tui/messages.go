@@ -24,18 +24,3 @@ type historyLoadedMsg struct {
 	db      *sql.DB
 	err     error
 }
-
-type commandOutputMsg string
-
-type errMsg error
-
-type clearViewportMsg struct{}
-
-type aiResponseMsg struct {
-	response string
-	err      error
-}
-
-type logStreamMsg struct {
-	lines []string
-}

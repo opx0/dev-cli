@@ -38,10 +38,14 @@ func New(pipe *pipeline.Pipeline) Model {
 	var aiPlugin *ai.Plugin
 
 	if p := pipe.GetPlugin("command"); p != nil {
-		cmdPlugin = p.(*command.Plugin)
+		if cp, ok := p.(*command.Plugin); ok {
+			cmdPlugin = cp
+		}
 	}
 	if p := pipe.GetPlugin("ai"); p != nil {
-		aiPlugin = p.(*ai.Plugin)
+		if ap, ok := p.(*ai.Plugin); ok {
+			aiPlugin = ap
+		}
 	}
 
 	return Model{

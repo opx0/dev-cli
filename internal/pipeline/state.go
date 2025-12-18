@@ -47,6 +47,7 @@ type StateStore struct {
 	mu sync.RWMutex
 
 	Blocks      []Block
+	blockIndex  map[string]int // O(1) lookup by ID -> slice index
 	SelectedIdx int
 	MaxBlocks   int
 
@@ -67,6 +68,7 @@ type StateStore struct {
 func NewStateStore() *StateStore {
 	return &StateStore{
 		Blocks:        make([]Block, 0),
+		blockIndex:    make(map[string]int),
 		SelectedIdx:   -1,
 		MaxBlocks:     100,
 		Suggestions:   make([]Suggestion, 0),
@@ -78,10 +80,17 @@ func (s *StateStore) AddBlock(block Block) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.Blocks = append(s.Blocks, block)
-	if len(s.Blocks) > s.MaxBlocks {
+	// If we're at max capacity, remove oldest block from index
+	if len(s.Blocks) >= s.MaxBlocks {
+		oldest := s.Blocks[0]
+		delete(s.blockIndex, oldest.ID)
 		s.Blocks = s.Blocks[1:]
+		// Rebuild index since indices shifted
+		s.rebuildIndex()
 	}
+
+	s.Blocks = append(s.Blocks, block)
+	s.blockIndex[block.ID] = len(s.Blocks) - 1
 	s.SelectedIdx = len(s.Blocks) - 1
 
 	if block.ExitCode != 0 {
@@ -93,10 +102,8 @@ func (s *StateStore) GetBlock(id string) *Block {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	for i := range s.Blocks {
-		if s.Blocks[i].ID == id {
-			return &s.Blocks[i]
-		}
+	if idx, ok := s.blockIndex[id]; ok && idx < len(s.Blocks) {
+		return &s.Blocks[idx]
 	}
 	return nil
 }
@@ -126,11 +133,8 @@ func (s *StateStore) UpdateBlock(id string, fn func(*Block)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	for i := range s.Blocks {
-		if s.Blocks[i].ID == id {
-			fn(&s.Blocks[i])
-			return
-		}
+	if idx, ok := s.blockIndex[id]; ok && idx < len(s.Blocks) {
+		fn(&s.Blocks[idx])
 	}
 }
 
@@ -161,7 +165,16 @@ func (s *StateStore) ClearBlocks() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.Blocks = make([]Block, 0)
+	s.blockIndex = make(map[string]int)
 	s.SelectedIdx = -1
+}
+
+// rebuildIndex rebuilds the block index from the slice (internal use, must hold lock)
+func (s *StateStore) rebuildIndex() {
+	s.blockIndex = make(map[string]int, len(s.Blocks))
+	for i, block := range s.Blocks {
+		s.blockIndex[block.ID] = i
+	}
 }
 
 func (s *StateStore) SetDockerHealth(h infra.DockerHealth) {
