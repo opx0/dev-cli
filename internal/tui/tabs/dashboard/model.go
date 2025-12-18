@@ -8,45 +8,50 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 )
 
-type FocusPanel int
-
-const (
-	FocusSidebar FocusPanel = iota
-	FocusMain
-)
+// OutputBlock represents a single command output block
+type OutputBlock struct {
+	Command   string
+	Output    string
+	ExitCode  int
+	Timestamp string
+	Folded    bool
+}
 
 type Model struct {
 	width  int
 	height int
-	focus  FocusPanel
 
-	sidebar  components.Panel
-	terminal components.Panel
 	viewport viewport.Model
 	input    textinput.Model
 
+	// System status
 	dockerHealth  infra.DockerHealth
 	gpuStats      infra.GPUStats
 	serviceHealth []infra.ServiceStatus
 	cwd           string
 
-	insertMode bool
+	// Output blocks (warp-style)
+	outputBlocks  []OutputBlock
+	selectedBlock int
+
+	// UI state
+	insertMode     bool
+	showingActions bool
 }
 
 func New() Model {
 	ti := textinput.New()
-	ti.Placeholder = "type command... (press 'i' to insert)"
-	ti.CharLimit = 256
+	ti.Placeholder = "type command..."
+	ti.CharLimit = 512
 	ti.Width = 60
 
 	vp := viewport.New(0, 0)
 
 	return Model{
-		sidebar:  components.NewPanel(" ⌘ Mission Control"),
-		terminal: components.NewPanel(" >_ Terminal"),
-		viewport: vp,
-		input:    ti,
-		focus:    FocusSidebar,
+		viewport:      vp,
+		input:         ti,
+		outputBlocks:  []OutputBlock{},
+		selectedBlock: -1,
 	}
 }
 
@@ -54,38 +59,15 @@ func (m Model) SetSize(w, h int) Model {
 	m.width = w
 	m.height = h
 
-	sidebarWidth := 30
-	terminalWidth := w - sidebarWidth - 4
-	panelHeight := h - 6
-
-	if terminalWidth < 40 {
-		terminalWidth = 40
-	}
-	if panelHeight < 10 {
-		panelHeight = 10
+	contentHeight := h - 10 // header + input area
+	if contentHeight < 5 {
+		contentHeight = 5
 	}
 
-	m.sidebar = m.sidebar.SetSize(sidebarWidth, panelHeight)
-	m.terminal = m.terminal.SetSize(terminalWidth, panelHeight)
-	m.viewport.Width = terminalWidth - 4
-	m.viewport.Height = panelHeight - 6
-	m.input.Width = terminalWidth - 10
+	m.viewport.Width = w - 4
+	m.viewport.Height = contentHeight
+	m.input.Width = w - 10
 
-	return m
-}
-
-func (m Model) SetFocus(f FocusPanel) Model {
-	m.focus = f
-	return m
-}
-
-func (m Model) SetInsertMode(insert bool) Model {
-	m.insertMode = insert
-	if insert {
-		m.input.Focus()
-	} else {
-		m.input.Blur()
-	}
 	return m
 }
 
@@ -109,8 +91,14 @@ func (m Model) SetCwd(cwd string) Model {
 	return m
 }
 
-func (m Model) Focus() FocusPanel {
-	return m.focus
+func (m Model) SetInsertMode(insert bool) Model {
+	m.insertMode = insert
+	if insert {
+		m.input.Focus()
+	} else {
+		m.input.Blur()
+	}
+	return m
 }
 
 func (m Model) InsertMode() bool {
@@ -168,4 +156,108 @@ func (m Model) ServiceHealth() []infra.ServiceStatus {
 
 func (m Model) Cwd() string {
 	return m.cwd
+}
+
+// Output block management
+func (m Model) AddOutputBlock(cmd string) Model {
+	block := OutputBlock{
+		Command: cmd,
+	}
+	m.outputBlocks = append(m.outputBlocks, block)
+	m.selectedBlock = len(m.outputBlocks) - 1
+	return m
+}
+
+func (m Model) UpdateLastBlock(output string, exitCode int) Model {
+	if len(m.outputBlocks) > 0 {
+		idx := len(m.outputBlocks) - 1
+		m.outputBlocks[idx].Output = output
+		m.outputBlocks[idx].ExitCode = exitCode
+	}
+	return m
+}
+
+func (m Model) OutputBlocks() []OutputBlock {
+	return m.outputBlocks
+}
+
+func (m Model) SelectedBlock() int {
+	return m.selectedBlock
+}
+
+func (m Model) SetSelectedBlock(idx int) Model {
+	if idx >= -1 && idx < len(m.outputBlocks) {
+		m.selectedBlock = idx
+	}
+	return m
+}
+
+func (m Model) ToggleFoldBlock(idx int) Model {
+	if idx >= 0 && idx < len(m.outputBlocks) {
+		m.outputBlocks[idx].Folded = !m.outputBlocks[idx].Folded
+	}
+	return m
+}
+
+func (m Model) ShowingActions() bool {
+	return m.showingActions
+}
+
+func (m Model) SetShowingActions(show bool) Model {
+	m.showingActions = show
+	return m
+}
+
+// HeaderWidgets returns widgets for the header bar
+func (m Model) HeaderWidgets() []components.HeaderWidget {
+	var widgets []components.HeaderWidget
+
+	// Docker widget
+	dockerWidget := components.NewHeaderWidget("🐳", "Docker", "")
+	if m.dockerHealth.Available {
+		running := 0
+		for _, c := range m.dockerHealth.Containers {
+			if c.State == "running" {
+				running++
+			}
+		}
+		dockerWidget.Value = string(rune('0'+running)) + " ●"
+		dockerWidget = dockerWidget.SetSuccess(true)
+	} else {
+		dockerWidget.Value = "off"
+		dockerWidget = dockerWidget.SetError(true)
+	}
+	widgets = append(widgets, dockerWidget)
+
+	// GPU widget (if available)
+	if m.gpuStats.Available {
+		gpuWidget := components.NewHeaderWidget("▮", "GPU", "")
+		gpuWidget.Value = string(rune('0'+m.gpuStats.UtilizationPct/10)) + "0%"
+		if m.gpuStats.UtilizationPct > 80 {
+			gpuWidget = gpuWidget.SetError(true)
+		} else {
+			gpuWidget = gpuWidget.SetActive(true)
+		}
+		widgets = append(widgets, gpuWidget)
+	}
+
+	// Services widget
+	onlineCount := 0
+	for _, s := range m.serviceHealth {
+		if s.Available {
+			onlineCount++
+		}
+	}
+	if len(m.serviceHealth) > 0 {
+		svcWidget := components.NewHeaderWidget("◉", "Services", "")
+		svcWidget.Value = string(rune('0'+onlineCount)) + "/" + string(rune('0'+len(m.serviceHealth)))
+		if onlineCount == len(m.serviceHealth) {
+			svcWidget = svcWidget.SetSuccess(true)
+		} else {
+			svcWidget = svcWidget.SetError(true)
+		}
+		widgets = append(widgets, svcWidget)
+	}
+
+	return widgets
 }

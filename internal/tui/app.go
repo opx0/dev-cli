@@ -5,13 +5,14 @@ import (
 	"database/sql"
 	"os"
 
-	"dev-cli/internal/config"
 	"dev-cli/internal/infra"
 	"dev-cli/internal/llm"
+	"dev-cli/internal/pipeline"
+	"dev-cli/internal/plugins/ai"
+	"dev-cli/internal/plugins/command"
 	"dev-cli/internal/storage"
 	"dev-cli/internal/tui/components"
-	"dev-cli/internal/tui/tabs/assist"
-	"dev-cli/internal/tui/tabs/dashboard"
+	"dev-cli/internal/tui/tabs/agent"
 	"dev-cli/internal/tui/tabs/history"
 	"dev-cli/internal/tui/tabs/monitor"
 
@@ -38,9 +39,8 @@ const (
 type Tab int
 
 const (
-	TabDashboard Tab = iota
-	TabMonitor
-	TabAssist
+	TabAgent Tab = iota
+	TabContainers
 	TabHistory
 )
 
@@ -51,20 +51,22 @@ type Model struct {
 	width     int
 	height    int
 	quitting  bool
+	tickCount int
 
-	dashboard dashboard.Model
-	monitor   monitor.Model
-	assist    assist.Model
-	history   history.Model
+	agent      agent.Model
+	containers monitor.Model
+	history    history.Model
 
 	tabBar    components.TabBar
 	statusBar components.StatusBar
 	spinner   spinner.Model
 	help      help.Model
 
-	db       *sql.DB
-	aiClient *llm.HybridClient
-	cwd      string
+	db           *sql.DB
+	aiClient     *llm.HybridClient
+	dockerClient *infra.DockerClient
+	pipe         *pipeline.Pipeline
+	cwd          string
 }
 
 func InitialModel() Model {
@@ -75,29 +77,41 @@ func InitialModel() Model {
 	cwd, _ := os.Getwd()
 	aiClient := llm.NewHybridClient()
 
-	aiMode := "local"
-	if config.Current.IsWebSearchEnabled() {
-		aiMode = "cloud"
-	}
+	// Create pipeline and register plugins
+	pipe := pipeline.NewPipeline()
 
-	tabBar := components.NewTabBar([]string{
-		"1 ⊞ dash",
-		"2 ~ logs",
-		"3 ? ask",
-		"4 ↻ hist",
+	// Register command plugin
+	cmdPlugin := command.New()
+	pipe.Register(cmdPlugin)
+
+	// Register AI plugin
+	aiPlug := ai.New(aiClient)
+	pipe.Register(aiPlug)
+
+	// Start the pipeline
+	pipe.Start()
+
+	// Set initial state
+	pipe.State().SetCwd(cwd)
+
+	// 3 tabs: Agent, Containers, History
+	tabBar := components.NewTabBar([]components.TabItem{
+		{Icon: "◈", Label: "Agent"},
+		{Icon: "⬢", Label: "Containers"},
+		{Icon: "↻", Label: "History"},
 	})
 
 	return Model{
 		state:     StateLoading,
 		mode:      ModeNormal,
-		activeTab: TabDashboard,
+		activeTab: TabAgent,
 		cwd:       cwd,
 		aiClient:  aiClient,
+		pipe:      pipe,
 
-		dashboard: dashboard.New().SetCwd(cwd),
-		monitor:   monitor.New(),
-		assist:    assist.New(aiClient, aiMode),
-		history:   history.New(),
+		agent:      agent.New(pipe),
+		containers: monitor.New(),
+		history:    history.New(),
 
 		tabBar:    tabBar,
 		statusBar: components.NewStatusBar(),
@@ -113,6 +127,7 @@ func (m Model) Init() tea.Cmd {
 		checkGPUStats,
 		checkServices,
 		checkDBAndHistory,
+		checkGitStatus,
 	)
 }
 
@@ -126,23 +141,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.tabBar = m.tabBar.SetWidth(msg.Width)
 		m.statusBar = m.statusBar.SetWidth(msg.Width)
 
-		m.dashboard = m.dashboard.SetSize(msg.Width, msg.Height-4)
-		m.monitor = m.monitor.SetSize(msg.Width, msg.Height-4)
-		m.assist = m.assist.SetSize(msg.Width, msg.Height-4)
+		m.agent = m.agent.SetSize(msg.Width, msg.Height-4)
+		m.containers = m.containers.SetSize(msg.Width, msg.Height-4)
 		m.history = m.history.SetSize(msg.Width, msg.Height-4)
 
 	case dockerHealthMsg:
-		m.dashboard = m.dashboard.SetDockerHealth(msg.health)
-		m.monitor = m.monitor.SetDockerHealth(msg.health)
+		m.agent = m.agent.SetDockerHealth(msg.health)
+		m.containers = m.containers.SetDockerHealth(msg.health)
 		if msg.health.Available {
 			m.state = StateMain
+			// Fetch logs for first container if available
+			if len(msg.health.Containers) > 0 {
+				cmds = append(cmds, fetchContainerLogs(msg.health.Containers[0].ID))
+			}
 		}
 
+	case containerLogsMsg:
+		m.containers = m.containers.SetLogLines(msg.lines)
+
 	case gpuStatsMsg:
-		m.dashboard = m.dashboard.SetGPUStats(msg.stats)
+		m.agent = m.agent.SetGPUStats(msg.stats)
 
 	case serviceHealthMsg:
-		m.dashboard = m.dashboard.SetServiceHealth(msg.services)
+		// Services handled by pipeline (no longer needed in agent model)
+		_ = msg.services
 
 	case historyLoadedMsg:
 		if msg.err == nil {
@@ -150,19 +172,38 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.history = m.history.SetHistory(msg.history)
 		}
 
+	case gitStatusMsg:
+		m.agent = m.agent.SetGitStatus(msg.status)
+
+	case starshipLineMsg:
+		m.agent = m.agent.SetStarshipLine(msg.line)
+
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
-		cmds = append(cmds, cmd, checkGPUStats, checkDockerHealth, checkServices)
+		cmds = append(cmds, cmd)
 
-	case commandOutputMsg:
-		m.dashboard = m.dashboard.AppendOutput(string(msg))
+		// Only check status every 10 ticks to reduce flickering
+		m.tickCount++
+		if m.tickCount >= 10 {
+			m.tickCount = 0
+			cmds = append(cmds, checkGPUStats, checkDockerHealth, checkServices, checkGitStatus, checkStarshipLine)
+		}
 
-	case clearViewportMsg:
-		m.dashboard = m.dashboard.ClearViewport()
+	case agent.CommandExecutedMsg:
+		// Forward to agent
+		var cmd tea.Cmd
+		m.agent, cmd = m.agent.Update(msg, agent.DefaultKeyMap())
+		m.mode = m.getModeFromTab()
+		cmds = append(cmds, cmd)
+
+	case agent.AIResponseMsg:
+		// Forward to agent
+		var cmd tea.Cmd
+		m.agent, cmd = m.agent.Update(msg, agent.DefaultKeyMap())
+		cmds = append(cmds, cmd)
 
 	case tea.KeyMsg:
-
 		if msg.String() == "ctrl+c" {
 			m.quitting = true
 			return m, tea.Quit
@@ -171,12 +212,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.mode == ModeNormal {
 			switch msg.String() {
 			case "1":
-				m.activeTab = TabDashboard
+				m.activeTab = TabAgent
 			case "2":
-				m.activeTab = TabMonitor
+				m.activeTab = TabContainers
+				// Fetch logs when switching to containers tab
+				if m.containers.SelectedContainer() != nil {
+					cmds = append(cmds, fetchContainerLogs(m.containers.SelectedContainer().ID))
+				}
 			case "3":
-				m.activeTab = TabAssist
-			case "4":
 				m.activeTab = TabHistory
 			case "q":
 				m.quitting = true
@@ -186,19 +229,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		var cmd tea.Cmd
 		switch m.activeTab {
-		case TabDashboard:
-			m.dashboard, cmd = m.dashboard.Update(msg, dashboard.DefaultKeyMap())
+		case TabAgent:
+			m.agent, cmd = m.agent.Update(msg, agent.DefaultKeyMap())
 			m.mode = m.getModeFromTab()
 			cmds = append(cmds, cmd)
 
-		case TabMonitor:
-			m.monitor, cmd = m.monitor.Update(msg, monitor.DefaultKeyMap())
+		case TabContainers:
+			oldCursor := m.containers.ContainerCursor()
+			m.containers, cmd = m.containers.Update(msg, monitor.DefaultKeyMap())
 			cmds = append(cmds, cmd)
 
-		case TabAssist:
-			m.assist, cmd = m.assist.Update(msg, assist.DefaultKeyMap())
-			m.mode = m.getModeFromTab()
-			cmds = append(cmds, cmd)
+			// Fetch logs when container selection changes
+			if m.containers.ContainerCursor() != oldCursor {
+				if container := m.containers.SelectedContainer(); container != nil {
+					cmds = append(cmds, fetchContainerLogs(container.ID))
+				}
+			}
 
 		case TabHistory:
 			m.history, cmd = m.history.Update(msg, history.DefaultKeyMap())
@@ -211,12 +257,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) getModeFromTab() AppMode {
 	switch m.activeTab {
-	case TabDashboard:
-		if m.dashboard.InsertMode() {
-			return ModeInsert
-		}
-	case TabAssist:
-		if m.assist.InsertMode() {
+	case TabAgent:
+		if m.agent.InsertMode() {
 			return ModeInsert
 		}
 	}
@@ -243,7 +285,7 @@ func (m Model) viewLoading() string {
 		Padding(0, 1).
 		Render("dev-cli")
 
-	status := m.spinner.View() + " Checking Docker daemon..."
+	status := m.spinner.View() + " Initializing..."
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("#585b70")).
@@ -254,18 +296,15 @@ func (m Model) viewLoading() string {
 }
 
 func (m Model) viewMain() string {
-
 	m.tabBar = m.tabBar.SetActive(int(m.activeTab)).SetInsertMode(m.mode == ModeInsert)
 	tabBar := m.tabBar.Render()
 
 	var content string
 	switch m.activeTab {
-	case TabDashboard:
-		content = m.dashboard.View()
-	case TabMonitor:
-		content = m.monitor.View()
-	case TabAssist:
-		content = m.assist.View()
+	case TabAgent:
+		content = m.agent.View()
+	case TabContainers:
+		content = m.containers.View()
 	case TabHistory:
 		content = m.history.View()
 	}
@@ -279,12 +318,10 @@ func (m Model) viewMain() string {
 	focusLabel := m.getFocusLabel()
 	var statusBar string
 	switch m.activeTab {
-	case TabDashboard:
-		statusBar = m.statusBar.Render(DashboardKeys, focusLabel)
-	case TabMonitor:
+	case TabAgent:
+		statusBar = m.statusBar.Render(AgentKeys, focusLabel)
+	case TabContainers:
 		statusBar = m.statusBar.Render(MonitorKeys, focusLabel)
-	case TabAssist:
-		statusBar = m.statusBar.Render(AssistKeys, focusLabel)
 	case TabHistory:
 		statusBar = m.statusBar.Render(HistoryKeys, focusLabel)
 	}
@@ -294,28 +331,49 @@ func (m Model) viewMain() string {
 
 func (m Model) getFocusLabel() string {
 	switch m.activeTab {
-	case TabDashboard:
-		if m.dashboard.Focus() == dashboard.FocusSidebar {
-			return "sidebar"
+	case TabAgent:
+		return "agent"
+	case TabContainers:
+		switch m.containers.Focus() {
+		case monitor.FocusList:
+			return "containers"
+		case monitor.FocusLogs:
+			return "logs"
+		case monitor.FocusStats:
+			return "stats"
 		}
-		return "main"
-	case TabMonitor:
-		if m.monitor.Focus() == monitor.FocusSidebar {
-			return "sidebar"
-		}
-		return "main"
-	case TabAssist:
-		if m.assist.Focus() == assist.FocusSidebar {
-			return "sidebar"
-		}
-		return "main"
+		return "containers"
 	case TabHistory:
 		if m.history.Focus() == history.FocusSidebar {
-			return "sidebar"
+			return "list"
 		}
-		return "main"
+		return "details"
 	}
 	return "main"
+}
+
+// Messages
+type containerLogsMsg struct {
+	containerID string
+	lines       []string
+	err         error
+}
+
+func fetchContainerLogs(containerID string) tea.Cmd {
+	return func() tea.Msg {
+		dockerClient, err := infra.NewDockerClient()
+		if err != nil {
+			return containerLogsMsg{containerID: containerID, err: err}
+		}
+		defer dockerClient.Close()
+
+		lines, err := dockerClient.GetContainerLogs(context.Background(), containerID, 100)
+		return containerLogsMsg{
+			containerID: containerID,
+			lines:       lines,
+			err:         err,
+		}
+	}
 }
 
 func checkDockerHealth() tea.Msg {
@@ -356,4 +414,22 @@ func checkDBAndHistory() tea.Msg {
 	}
 
 	return historyLoadedMsg{db: db, history: history}
+}
+
+type gitStatusMsg struct {
+	status infra.GitStatus
+}
+
+func checkGitStatus() tea.Msg {
+	status := infra.GetGitStatus()
+	return gitStatusMsg{status: status}
+}
+
+type starshipLineMsg struct {
+	line string
+}
+
+func checkStarshipLine() tea.Msg {
+	line := infra.GetStarshipStatusLine()
+	return starshipLineMsg{line: line}
 }

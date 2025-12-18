@@ -5,197 +5,42 @@ import (
 	"os"
 	"strings"
 
+	"dev-cli/internal/tui/components"
 	"dev-cli/internal/tui/theme"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/lipgloss/table"
 )
 
 func (m Model) View() string {
-	sidebarWidth := 32
-	if m.width < 100 {
-		sidebarWidth = 28
+	// Full-width layout with header widgets bar
+	contentWidth := m.width - 2
+	if contentWidth < 40 {
+		contentWidth = 40
 	}
-	terminalWidth := m.width - sidebarWidth - 4
-
-	if terminalWidth < 40 {
-		terminalWidth = 40
-	}
-
-	panelHeight := m.height - 4
-	if panelHeight < 10 {
-		panelHeight = 10
-	}
-
-	sidebar := m.renderSidebar(sidebarWidth, panelHeight)
-	terminal := m.renderTerminal(terminalWidth, panelHeight)
-
-	return lipgloss.JoinHorizontal(lipgloss.Top, sidebar, terminal)
-}
-
-func (m Model) renderSidebar(width, height int) string {
-	borderColor := theme.Surface2
-	if m.focus == FocusSidebar {
-		borderColor = theme.Mauve
-	}
-
-	panelStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(borderColor).
-		Width(width).
-		Height(height)
-
-	headerStyle := lipgloss.NewStyle().
-		Foreground(theme.Lavender).
-		Bold(true)
 
 	var content strings.Builder
 
-	content.WriteString(headerStyle.Render("▢ Docker") + "\n")
-	content.WriteString(m.renderDockerCard() + "\n")
+	// Header bar with widgets
+	content.WriteString(m.renderHeaderBar(contentWidth) + "\n")
 
-	content.WriteString(headerStyle.Render("☰ Services") + "\n")
-	content.WriteString(m.renderServiceTable(width-4) + "\n")
+	// Main content area
+	content.WriteString(m.renderOutputArea(contentWidth, m.height-8) + "\n")
 
-	if m.gpuStats.Available {
-		content.WriteString(headerStyle.Render("▮ GPU") + "\n")
-		content.WriteString(m.renderGPUCard(width-4) + "\n")
-	}
+	// Input area at bottom
+	content.WriteString(m.renderInputArea(contentWidth))
 
-	return panelStyle.Render(content.String())
+	return content.String()
 }
 
-func (m Model) renderDockerCard() string {
-	if !m.dockerHealth.Available {
-		return lipgloss.NewStyle().
-			Foreground(theme.Red).
-			Padding(0, 1).
-			Render("✗ Docker unavailable")
-	}
+func (m Model) renderHeaderBar(width int) string {
+	// Title
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(theme.Lavender)
 
-	running := 0
-	stopped := 0
-	for _, c := range m.dockerHealth.Containers {
-		if c.State == "running" {
-			running++
-		} else {
-			stopped++
-		}
-	}
+	title := titleStyle.Render("⌘ Command Center")
 
-	statusStyle := lipgloss.NewStyle().Foreground(theme.Green)
-	dimStyle := lipgloss.NewStyle().Foreground(theme.Overlay0)
-
-	return fmt.Sprintf(" %s v%s\n %s%s",
-		statusStyle.Render("●"),
-		dimStyle.Render(m.dockerHealth.Version),
-		lipgloss.NewStyle().Foreground(theme.Green).Render(fmt.Sprintf("%d running", running)),
-		dimStyle.Render(fmt.Sprintf(", %d stopped", stopped)))
-}
-
-func (m Model) renderServiceTable(width int) string {
-	if len(m.serviceHealth) == 0 {
-		return lipgloss.NewStyle().
-			Foreground(theme.Overlay0).
-			Padding(0, 1).
-			Render("Checking...")
-	}
-
-	rows := make([][]string, len(m.serviceHealth))
-	for i, s := range m.serviceHealth {
-		status := lipgloss.NewStyle().Foreground(theme.Green).Render("●")
-		if !s.Available {
-			status = lipgloss.NewStyle().Foreground(theme.Red).Render("○")
-		}
-		rows[i] = []string{status, s.Name, fmt.Sprintf(":%d", s.Port)}
-	}
-
-	t := table.New().
-		Border(lipgloss.HiddenBorder()).
-		BorderStyle(lipgloss.NewStyle().Foreground(theme.Surface2)).
-		Width(width).
-		Rows(rows...).
-		StyleFunc(func(row, col int) lipgloss.Style {
-			switch col {
-			case 0:
-				return lipgloss.NewStyle().Width(2)
-			case 1:
-				return lipgloss.NewStyle().Foreground(theme.Text).Width(width - 12)
-			case 2:
-				return lipgloss.NewStyle().Foreground(theme.Overlay0).Width(6)
-			}
-			return lipgloss.NewStyle()
-		})
-
-	return t.Render()
-}
-
-func (m Model) renderGPUCard(width int) string {
-	pct := m.gpuStats.UtilizationPct
-	barWidth := width - 10
-	if barWidth < 5 {
-		barWidth = 5
-	}
-
-	filled := (pct * barWidth) / 100
-	var bar strings.Builder
-
-	for i := 0; i < barWidth; i++ {
-		var char string
-		if i < filled {
-			char = "█"
-		} else {
-			char = "░"
-		}
-
-		var color lipgloss.Color
-		ratio := float64(i) / float64(barWidth)
-		if ratio < 0.5 {
-			color = theme.Green
-		} else if ratio < 0.75 {
-			color = theme.Yellow
-		} else {
-			color = theme.Red
-		}
-
-		if i < filled {
-			bar.WriteString(lipgloss.NewStyle().Foreground(color).Render(char))
-		} else {
-			bar.WriteString(lipgloss.NewStyle().Foreground(theme.Surface1).Render(char))
-		}
-	}
-
-	pctStyle := lipgloss.NewStyle().Foreground(theme.Text).Bold(true)
-	if pct > 80 {
-		pctStyle = pctStyle.Foreground(theme.Red)
-	}
-
-	memStyle := lipgloss.NewStyle().Foreground(theme.Overlay0)
-	memStr := memStyle.Render(fmt.Sprintf("%d/%d MB", m.gpuStats.UsedMemoryMB, m.gpuStats.TotalMemoryMB))
-
-	return fmt.Sprintf(" %s %s\n %s", bar.String(), pctStyle.Render(fmt.Sprintf("%d%%", pct)), memStr)
-}
-
-func (m Model) renderTerminal(width, height int) string {
-	borderColor := theme.Surface2
-	if m.focus == FocusMain {
-		if m.insertMode {
-			borderColor = theme.Green
-		} else {
-			borderColor = theme.Mauve
-		}
-	}
-
-	panelStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(borderColor).
-		Width(width).
-		Height(height)
-
-	headerStyle := lipgloss.NewStyle().
-		Foreground(theme.Lavender).
-		Bold(true)
-
+	// CWD display
 	cwdStyle := lipgloss.NewStyle().
 		Foreground(theme.Overlay0).
 		Italic(true)
@@ -205,13 +50,191 @@ func (m Model) renderTerminal(width, height int) string {
 		cwdDisplay = "~" + cwdDisplay[len(home):]
 	}
 
+	cwd := cwdStyle.Render(" " + cwdDisplay)
+
+	// Header widgets
+	widgetBar := components.NewHeaderWidgetBar(m.HeaderWidgets()...).SetWidth(width)
+	widgetsStr := widgetBar.Render()
+
+	// Calculate spacing
+	leftSide := title + cwd
+	leftWidth := lipgloss.Width(leftSide)
+	widgetsWidth := lipgloss.Width(widgetsStr)
+
+	spacerWidth := width - leftWidth - widgetsWidth
+	spacer := ""
+	if spacerWidth > 0 {
+		spacer = strings.Repeat(" ", spacerWidth)
+	}
+
+	headerBar := lipgloss.NewStyle().
+		Background(theme.Mantle).
+		Width(width).
+		Padding(0, 1)
+
+	return headerBar.Render(leftSide + spacer + widgetsStr)
+}
+
+func (m Model) renderOutputArea(width, height int) string {
+	panelStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(theme.Surface2).
+		Width(width).
+		Height(height)
+
+	if m.insertMode {
+		panelStyle = panelStyle.BorderForeground(theme.Green)
+	} else {
+		panelStyle = panelStyle.BorderForeground(theme.Mauve)
+	}
+
 	var content strings.Builder
-	content.WriteString(headerStyle.Render("▸ Terminal") + " " + cwdStyle.Render(cwdDisplay) + "\n\n")
 
-	content.WriteString(m.viewport.View())
+	if len(m.outputBlocks) == 0 {
+		// Empty state
+		emptyStyle := lipgloss.NewStyle().
+			Foreground(theme.Overlay0).
+			Italic(true).
+			Padding(2, 2)
 
-	promptStyle := lipgloss.NewStyle().Foreground(theme.Green).Bold(true)
-	content.WriteString("\n" + promptStyle.Render("▸ ") + m.input.View())
+		welcomeMsg := `Welcome to dev-cli Command Center
+
+Press 'i' to start typing commands
+Use 'j/k' to navigate output blocks
+Press '?' for quick actions
+
+Try: docker ps, npm test, git status`
+
+		content.WriteString(emptyStyle.Render(welcomeMsg))
+	} else {
+		// Render output blocks
+		blockWidth := width - 6
+		for i, block := range m.outputBlocks {
+			blockComp := components.NewOutputBlock(block.Command).
+				SetOutput(block.Output).
+				SetExitCode(block.ExitCode).
+				SetTimestamp(block.Timestamp).
+				SetFolded(block.Folded).
+				SetSelected(i == m.selectedBlock)
+
+			content.WriteString(blockComp.Render(blockWidth) + "\n\n")
+		}
+	}
+
+	// If we have viewport content from legacy, show it
+	viewportContent := m.viewport.View()
+	if viewportContent != "" && len(m.outputBlocks) == 0 {
+		content.WriteString(viewportContent)
+	}
 
 	return panelStyle.Render(content.String())
+}
+
+func (m Model) renderInputArea(width int) string {
+	inputStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(theme.Surface2).
+		Width(width).
+		Padding(0, 1)
+
+	if m.insertMode {
+		inputStyle = inputStyle.BorderForeground(theme.Green)
+	}
+
+	promptStyle := theme.Prompt
+	prompt := promptStyle.Render("❯ ")
+
+	// Mode hint
+	hintStyle := lipgloss.NewStyle().
+		Foreground(theme.Overlay0).
+		Italic(true)
+
+	hint := ""
+	if !m.insertMode {
+		hint = hintStyle.Render("  [i]nsert [?]actions [j/k]nav")
+	} else {
+		hint = hintStyle.Render("  [esc] normal mode")
+	}
+
+	inputRow := prompt + m.input.View()
+
+	// Calculate space for hint
+	inputWidth := lipgloss.Width(inputRow)
+	hintWidth := lipgloss.Width(hint)
+	spacerWidth := width - inputWidth - hintWidth - 4
+	spacer := ""
+	if spacerWidth > 0 {
+		spacer = strings.Repeat(" ", spacerWidth)
+	}
+
+	return inputStyle.Render(inputRow + spacer + hint)
+}
+
+// RenderActionMenu renders the context action menu popup
+func (m Model) RenderActionMenu() string {
+	if !m.showingActions {
+		return ""
+	}
+
+	var items []components.ActionMenuItem
+
+	// Context-aware actions
+	if len(m.outputBlocks) > 0 && m.selectedBlock >= 0 {
+		block := m.outputBlocks[m.selectedBlock]
+		if block.ExitCode != 0 {
+			items = append(items, components.ActionMenuItem{Key: "r", Label: "Retry command"})
+			items = append(items, components.ActionMenuItem{Key: "e", Label: "Explain error"})
+			items = append(items, components.ActionMenuItem{Key: "f", Label: "Fix with AI"})
+		}
+	}
+
+	// Docker actions
+	if m.dockerHealth.Available && len(m.dockerHealth.Containers) > 0 {
+		items = append(items, components.ActionMenuItem{Key: "l", Label: "View logs"})
+		items = append(items, components.ActionMenuItem{Key: "s", Label: "Shell into container"})
+	}
+
+	// General actions
+	items = append(items, components.ActionMenuItem{Key: "c", Label: "Clear screen"})
+	items = append(items, components.ActionMenuItem{Key: "h", Label: "View history"})
+
+	menu := components.NewActionMenu("Quick Actions", items...)
+
+	// Position in center
+	menuStr := menu.Render()
+	menuWidth := lipgloss.Width(menuStr)
+	menuHeight := lipgloss.Height(menuStr)
+
+	posX := (m.width - menuWidth) / 2
+	posY := (m.height - menuHeight) / 2
+
+	return lipgloss.NewStyle().
+		MarginLeft(posX).
+		MarginTop(posY).
+		Render(menuStr)
+}
+
+// StatusInfo returns info for the status bar
+func (m Model) StatusInfo() string {
+	var info []string
+
+	if m.dockerHealth.Available {
+		running := 0
+		for _, c := range m.dockerHealth.Containers {
+			if c.State == "running" {
+				running++
+			}
+		}
+		info = append(info, fmt.Sprintf("🐳 %d/%d", running, len(m.dockerHealth.Containers)))
+	}
+
+	if m.gpuStats.Available {
+		info = append(info, fmt.Sprintf("GPU %d%%", m.gpuStats.UtilizationPct))
+	}
+
+	if len(m.outputBlocks) > 0 {
+		info = append(info, fmt.Sprintf("📋 %d blocks", len(m.outputBlocks)))
+	}
+
+	return strings.Join(info, " │ ")
 }

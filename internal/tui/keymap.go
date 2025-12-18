@@ -15,16 +15,15 @@ type GlobalKeyMap struct {
 	Tab1   key.Binding
 	Tab2   key.Binding
 	Tab3   key.Binding
-	Tab4   key.Binding
 }
 
 func (k GlobalKeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Tab1, k.Tab2, k.Tab3, k.Tab4, k.Tab, k.Quit}
+	return []key.Binding{k.Tab1, k.Tab2, k.Tab3, k.Tab, k.Quit}
 }
 
 func (k GlobalKeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.Tab1, k.Tab2, k.Tab3, k.Tab4},
+		{k.Tab1, k.Tab2, k.Tab3},
 		{k.Up, k.Down, k.Tab},
 		{k.Insert, k.Escape, k.Quit},
 	}
@@ -57,123 +56,103 @@ var GlobalKeys = GlobalKeyMap{
 	),
 	Tab1: key.NewBinding(
 		key.WithKeys("1"),
-		key.WithHelp("1", "dashboard"),
+		key.WithHelp("1", "agent"),
 	),
 	Tab2: key.NewBinding(
 		key.WithKeys("2"),
-		key.WithHelp("2", "monitor"),
+		key.WithHelp("2", "containers"),
 	),
 	Tab3: key.NewBinding(
 		key.WithKeys("3"),
-		key.WithHelp("3", "assist"),
-	),
-	Tab4: key.NewBinding(
-		key.WithKeys("4"),
-		key.WithHelp("4", "history"),
+		key.WithHelp("3", "history"),
 	),
 }
 
-type DashboardKeyMap struct {
+// AgentKeyMap for Agent tab
+type AgentKeyMap struct {
 	GlobalKeyMap
-	ScrollUp   key.Binding
-	ScrollDown key.Binding
+	Fold     key.Binding
+	Clear    key.Binding
+	ToggleAI key.Binding
+	RunFix   key.Binding
 }
 
-func (k DashboardKeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Insert, k.ScrollUp, k.ScrollDown, k.Tab, k.Quit}
+func (k AgentKeyMap) ShortHelp() []key.Binding {
+	return []key.Binding{k.Insert, k.Fold, k.ToggleAI, k.Clear, k.Quit}
 }
 
-func (k DashboardKeyMap) FullHelp() [][]key.Binding {
+func (k AgentKeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.Tab1, k.Tab2, k.Tab3, k.Tab4},
-		{k.Insert, k.ScrollUp, k.ScrollDown},
-		{k.Tab, k.Quit},
+		{k.Tab1, k.Tab2, k.Tab3},
+		{k.Insert, k.Fold, k.Clear},
+		{k.ToggleAI, k.RunFix},
+		{k.Up, k.Down, k.Quit},
 	}
 }
 
-var DashboardKeys = DashboardKeyMap{
+var AgentKeys = AgentKeyMap{
 	GlobalKeyMap: GlobalKeys,
-	ScrollUp: key.NewBinding(
-		key.WithKeys("k", "up"),
-		key.WithHelp("j/k", "scroll"),
+	Fold: key.NewBinding(
+		key.WithKeys("z"),
+		key.WithHelp("z", "fold"),
 	),
-	ScrollDown: key.NewBinding(
-		key.WithKeys("j", "down"),
-		key.WithHelp("", ""),
+	Clear: key.NewBinding(
+		key.WithKeys("ctrl+l"),
+		key.WithHelp("Ctrl+l", "clear"),
+	),
+	ToggleAI: key.NewBinding(
+		key.WithKeys("ctrl+t"),
+		key.WithHelp("Ctrl+t", "AI mode"),
+	),
+	RunFix: key.NewBinding(
+		key.WithKeys("r"),
+		key.WithHelp("r", "run fix"),
 	),
 }
 
+// MonitorKeyMap for Containers tab
 type MonitorKeyMap struct {
 	GlobalKeyMap
-	ScrollLeft  key.Binding
-	ScrollRight key.Binding
-	ToggleWrap  key.Binding
-	ResetScroll key.Binding
-	TriggerRCA  key.Binding
+	Follow     key.Binding
+	LogLevel   key.Binding
+	Actions    key.Binding
+	ToggleWrap key.Binding
 }
 
 func (k MonitorKeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.ScrollLeft, k.ToggleWrap, k.TriggerRCA, k.Quit}
+	return []key.Binding{k.Up, k.Down, k.Follow, k.LogLevel, k.Actions, k.Quit}
 }
 
 func (k MonitorKeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.Tab1, k.Tab2, k.Tab3, k.Tab4},
-		{k.Up, k.Down, k.ScrollLeft, k.ScrollRight},
-		{k.ToggleWrap, k.ResetScroll, k.TriggerRCA},
-		{k.Tab, k.Quit},
+		{k.Tab1, k.Tab2, k.Tab3},
+		{k.Up, k.Down, k.Tab},
+		{k.Follow, k.LogLevel, k.ToggleWrap},
+		{k.Actions, k.Quit},
 	}
 }
 
 var MonitorKeys = MonitorKeyMap{
 	GlobalKeyMap: GlobalKeys,
-	ScrollLeft: key.NewBinding(
-		key.WithKeys("H", "shift+left"),
-		key.WithHelp("H/L", "scroll"),
+	Follow: key.NewBinding(
+		key.WithKeys("f"),
+		key.WithHelp("f", "follow"),
 	),
-	ScrollRight: key.NewBinding(
-		key.WithKeys("L", "shift+right"),
-		key.WithHelp("", ""),
+	LogLevel: key.NewBinding(
+		key.WithKeys("l"),
+		key.WithHelp("L", "filter"),
+	),
+	Actions: key.NewBinding(
+		key.WithKeys("a", "enter"),
+		key.WithHelp("a", "actions"),
 	),
 	ToggleWrap: key.NewBinding(
 		key.WithKeys("ctrl+w"),
 		key.WithHelp("Ctrl+w", "wrap"),
 	),
-	ResetScroll: key.NewBinding(
-		key.WithKeys("0"),
-		key.WithHelp("0", "reset"),
-	),
-	TriggerRCA: key.NewBinding(
-		key.WithKeys("?"),
-		key.WithHelp("?", "RCA"),
-	),
 }
 
-type AssistKeyMap struct {
-	GlobalKeyMap
-	ToggleAI key.Binding
-}
-
-func (k AssistKeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Insert, k.ToggleAI, k.Tab, k.Quit}
-}
-
-func (k AssistKeyMap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{
-		{k.Tab1, k.Tab2, k.Tab3, k.Tab4},
-		{k.Insert, k.ToggleAI},
-		{k.Tab, k.Quit},
-	}
-}
-
-var AssistKeys = AssistKeyMap{
-	GlobalKeyMap: GlobalKeys,
-	ToggleAI: key.NewBinding(
-		key.WithKeys("ctrl+t"),
-		key.WithHelp("Ctrl+t", "toggle AI"),
-	),
-}
-
+// HistoryKeyMap for History tab
 type HistoryKeyMap struct {
 	GlobalKeyMap
 	Details key.Binding
@@ -185,7 +164,7 @@ func (k HistoryKeyMap) ShortHelp() []key.Binding {
 
 func (k HistoryKeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.Tab1, k.Tab2, k.Tab3, k.Tab4},
+		{k.Tab1, k.Tab2, k.Tab3},
 		{k.Up, k.Down, k.Details},
 		{k.Tab, k.Quit},
 	}

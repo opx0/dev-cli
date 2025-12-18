@@ -9,17 +9,23 @@ import (
 )
 
 type TabBar struct {
-	Tabs       []string
+	Tabs       []TabItem
 	ActiveTab  int
 	Width      int
 	ShowMode   bool
 	InsertMode bool
+	Badges     map[int]int // tab index -> notification count
 }
 
-func NewTabBar(tabs []string) TabBar {
+type TabItem struct {
+	Icon  string
+	Label string
+}
+
+func NewTabBar(tabs []TabItem) TabBar {
 	return TabBar{
-		Tabs:      tabs,
-		ActiveTab: 0,
+		Tabs:   tabs,
+		Badges: make(map[int]int),
 	}
 }
 
@@ -37,7 +43,15 @@ func (t TabBar) SetWidth(w int) TabBar {
 
 func (t TabBar) SetInsertMode(insert bool) TabBar {
 	t.InsertMode = insert
-	t.ShowMode = insert
+	t.ShowMode = true
+	return t
+}
+
+func (t TabBar) SetBadge(tabIdx, count int) TabBar {
+	if t.Badges == nil {
+		t.Badges = make(map[int]int)
+	}
+	t.Badges[tabIdx] = count
 	return t
 }
 
@@ -45,25 +59,61 @@ func (t TabBar) Render() string {
 	var renderedTabs []string
 
 	for i, tab := range t.Tabs {
-		style := theme.Tab
+		// Determine style based on active state
+		var style lipgloss.Style
 		if i == t.ActiveTab {
 			style = theme.ActiveTab
+		} else {
+			style = theme.Tab
 		}
-		renderedTabs = append(renderedTabs, style.Render(tab))
+
+		// Build tab content
+		content := tab.Icon + " " + tab.Label
+
+		// Add badge if present
+		if count, ok := t.Badges[i]; ok && count > 0 {
+			badgeStyle := lipgloss.NewStyle().
+				Foreground(theme.Crust).
+				Background(theme.Red).
+				Bold(true)
+			content += " " + badgeStyle.Render(strings.Repeat("•", min(count, 3)))
+		}
+
+		renderedTabs = append(renderedTabs, style.Render(content))
 	}
 
-	row := lipgloss.JoinHorizontal(lipgloss.Bottom, renderedTabs...)
+	// Join tabs with subtle separator
+	separator := lipgloss.NewStyle().Foreground(theme.Surface2).Render("│")
+	row := strings.Join(renderedTabs, separator)
 
+	// Mode indicator
 	modeStr := ""
-	if t.InsertMode {
-		modeStr = theme.ModeIndicator.Render(" INSERT ")
+	if t.ShowMode {
+		if t.InsertMode {
+			modeStr = theme.ModeIndicator.Render(" INSERT ")
+		} else {
+			modeStr = theme.NormalModeIndicator.Render(" NORMAL ")
+		}
 	}
 
+	// Calculate spacing
 	spacer := ""
 	spacerWidth := t.Width - lipgloss.Width(row) - lipgloss.Width(modeStr) - 2
 	if spacerWidth > 0 {
 		spacer = strings.Repeat(" ", spacerWidth)
 	}
 
-	return row + spacer + modeStr
+	// Build final bar with background
+	barStyle := lipgloss.NewStyle().
+		Background(theme.Mantle).
+		Width(t.Width)
+
+	return barStyle.Render(row + spacer + modeStr)
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

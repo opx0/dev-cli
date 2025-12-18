@@ -2,52 +2,54 @@ package assist
 
 import (
 	"dev-cli/internal/llm"
-	"dev-cli/internal/tui/components"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 )
 
-type FocusPanel int
-
-const (
-	FocusSidebar FocusPanel = iota
-	FocusMain
-)
+// ChatMessage represents a single message in the chat
+type ChatMessage struct {
+	Role    string // "user" or "assistant"
+	Content string
+}
 
 type Model struct {
 	width  int
 	height int
-	focus  FocusPanel
 
-	sidebar  components.Panel
-	chat     components.Panel
 	viewport viewport.Model
 	input    textinput.Model
 
-	chatHistory []string
+	// Chat state
+	messages    []ChatMessage
+	chatHistory []string // Legacy compatibility
 	aiClient    *llm.HybridClient
-	aiMode      string
+	aiMode      string // "local" or "cloud"
 
+	// UI state
 	insertMode bool
+	isLoading  bool
+
+	// Context awareness
+	recentCommands int
+	containerCount int
+	errorCount     int
 }
 
 func New(aiClient *llm.HybridClient, aiMode string) Model {
 	ti := textinput.New()
 	ti.Placeholder = "Ask anything..."
-	ti.CharLimit = 512
+	ti.CharLimit = 1024
 	ti.Width = 60
 
 	vp := viewport.New(0, 0)
 
 	return Model{
-		sidebar:  components.NewPanel(" ◈ AI Model"),
-		chat:     components.NewPanel(" ◇ Chat"),
 		viewport: vp,
 		input:    ti,
 		aiClient: aiClient,
 		aiMode:   aiMode,
-		focus:    FocusSidebar,
+		messages: []ChatMessage{},
 	}
 }
 
@@ -55,28 +57,15 @@ func (m Model) SetSize(w, h int) Model {
 	m.width = w
 	m.height = h
 
-	sidebarWidth := 20
-	chatWidth := w - sidebarWidth - 4
-	panelHeight := h - 6
-
-	if chatWidth < 40 {
-		chatWidth = 40
-	}
-	if panelHeight < 10 {
-		panelHeight = 10
+	contentHeight := h - 8 // Header + input area
+	if contentHeight < 10 {
+		contentHeight = 10
 	}
 
-	m.sidebar = m.sidebar.SetSize(sidebarWidth, panelHeight)
-	m.chat = m.chat.SetSize(chatWidth, panelHeight)
-	m.viewport.Width = chatWidth - 4
-	m.viewport.Height = panelHeight - 6
-	m.input.Width = chatWidth - 10
+	m.viewport.Width = w - 4
+	m.viewport.Height = contentHeight
+	m.input.Width = w - 12
 
-	return m
-}
-
-func (m Model) SetFocus(f FocusPanel) Model {
-	m.focus = f
 	return m
 }
 
@@ -99,23 +88,27 @@ func (m Model) ToggleAIMode() Model {
 	return m
 }
 
-func (m Model) AddMessage(msg string) Model {
-	m.chatHistory = append(m.chatHistory, msg)
-	m.viewport.SetContent(m.formatChatHistory())
-	m.viewport.GotoBottom()
+// AddMessage adds a new message to the chat
+func (m Model) AddMessage(role, content string) Model {
+	msg := ChatMessage{
+		Role:    role,
+		Content: content,
+	}
+	m.messages = append(m.messages, msg)
+	m.chatHistory = append(m.chatHistory, content) // Legacy compatibility
 	return m
 }
 
-func (m Model) formatChatHistory() string {
-	result := ""
-	for _, msg := range m.chatHistory {
-		result += msg + "\n"
-	}
-	return result
+func (m Model) AddUserMessage(content string) Model {
+	return m.AddMessage("user", content)
 }
 
-func (m Model) Focus() FocusPanel {
-	return m.focus
+func (m Model) AddAssistantMessage(content string) Model {
+	return m.AddMessage("assistant", content)
+}
+
+func (m Model) Messages() []ChatMessage {
+	return m.messages
 }
 
 func (m Model) InsertMode() bool {
@@ -166,11 +159,54 @@ func (m Model) Height() int {
 }
 
 func (m Model) MessageCount() int {
-	return len(m.chatHistory)
+	return len(m.messages)
 }
 
 func (m Model) SetChatHistory(history []string) Model {
 	m.chatHistory = history
-	m.viewport.SetContent(m.formatChatHistory())
+	return m
+}
+
+func (m Model) IsLoading() bool {
+	return m.isLoading
+}
+
+func (m Model) SetLoading(loading bool) Model {
+	m.isLoading = loading
+	return m
+}
+
+// Context awareness setters
+func (m Model) SetRecentCommands(count int) Model {
+	m.recentCommands = count
+	return m
+}
+
+func (m Model) SetContainerCount(count int) Model {
+	m.containerCount = count
+	return m
+}
+
+func (m Model) SetErrorCount(count int) Model {
+	m.errorCount = count
+	return m
+}
+
+func (m Model) RecentCommands() int {
+	return m.recentCommands
+}
+
+func (m Model) ContainerCount() int {
+	return m.containerCount
+}
+
+func (m Model) ErrorCount() int {
+	return m.errorCount
+}
+
+// ClearMessages clears all messages
+func (m Model) ClearMessages() Model {
+	m.messages = []ChatMessage{}
+	m.chatHistory = []string{}
 	return m
 }

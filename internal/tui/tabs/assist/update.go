@@ -8,11 +8,12 @@ import (
 type KeyMap struct {
 	Insert   key.Binding
 	Escape   key.Binding
-	Tab      key.Binding
 	Enter    key.Binding
 	ToggleAI key.Binding
 	Up       key.Binding
 	Down     key.Binding
+	Clear    key.Binding
+	Copy     key.Binding
 }
 
 func DefaultKeyMap() KeyMap {
@@ -24,10 +25,6 @@ func DefaultKeyMap() KeyMap {
 		Escape: key.NewBinding(
 			key.WithKeys("esc"),
 			key.WithHelp("esc", "normal"),
-		),
-		Tab: key.NewBinding(
-			key.WithKeys("tab"),
-			key.WithHelp("Tab", "focus"),
 		),
 		Enter: key.NewBinding(
 			key.WithKeys("enter"),
@@ -45,6 +42,14 @@ func DefaultKeyMap() KeyMap {
 			key.WithKeys("down", "j"),
 			key.WithHelp("", ""),
 		),
+		Clear: key.NewBinding(
+			key.WithKeys("ctrl+l"),
+			key.WithHelp("Ctrl+l", "clear"),
+		),
+		Copy: key.NewBinding(
+			key.WithKeys("y"),
+			key.WithHelp("y", "copy"),
+		),
 	}
 }
 
@@ -54,17 +59,28 @@ func (m Model) Update(msg tea.Msg, keys KeyMap) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		if m.insertMode {
-
+			// Handle insert mode keys
 			switch {
 			case key.Matches(msg, keys.Escape):
 				m = m.SetInsertMode(false)
 				return m, nil
 
 			case key.Matches(msg, keys.Enter):
+				// Send message
+				value := m.input.Value()
+				if value != "" {
+					m = m.AddUserMessage(value)
+					m.input.SetValue("")
+					// In a real implementation, this would trigger AI response
+				}
+				return m, nil
 
+			case key.Matches(msg, keys.ToggleAI):
+				m = m.ToggleAIMode()
 				return m, nil
 			}
 
+			// Pass to text input
 			var cmd tea.Cmd
 			ti := m.input
 			ti, cmd = ti.Update(msg)
@@ -72,30 +88,28 @@ func (m Model) Update(msg tea.Msg, keys KeyMap) (Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 
 		} else {
-
+			// Handle normal mode keys
 			switch {
 			case key.Matches(msg, keys.Insert):
 				m = m.SetInsertMode(true)
-
-			case key.Matches(msg, keys.Tab):
-				if m.focus == FocusSidebar {
-					m.focus = FocusMain
-				} else {
-					m.focus = FocusSidebar
-				}
 
 			case key.Matches(msg, keys.ToggleAI):
 				m = m.ToggleAIMode()
 
 			case key.Matches(msg, keys.Up):
-				if m.focus == FocusMain {
-					m.viewport.LineUp(1)
-				}
+				m.viewport.LineUp(1)
 
 			case key.Matches(msg, keys.Down):
-				if m.focus == FocusMain {
-					m.viewport.LineDown(1)
-				}
+				m.viewport.LineDown(1)
+
+			case key.Matches(msg, keys.Clear):
+				m = m.ClearMessages()
+
+			case msg.String() == "g":
+				m.viewport.GotoTop()
+
+			case msg.String() == "G":
+				m.viewport.GotoBottom()
 			}
 		}
 	}

@@ -2,7 +2,6 @@ package monitor
 
 import (
 	"dev-cli/internal/infra"
-	"dev-cli/internal/tui/components"
 
 	"github.com/charmbracelet/bubbles/viewport"
 )
@@ -10,36 +9,50 @@ import (
 type FocusPanel int
 
 const (
-	FocusSidebar FocusPanel = iota
-	FocusMain
+	FocusList FocusPanel = iota
+	FocusLogs
+	FocusStats
 )
+
+// ContainerStats holds live metrics for sparklines
+type ContainerStats struct {
+	CPUHistory []int
+	MemUsed    int
+	MemTotal   int
+	NetIn      int64
+	NetOut     int64
+}
 
 type Model struct {
 	width  int
 	height int
 	focus  FocusPanel
 
-	sidebar  components.Panel
-	logPanel components.Panel
 	viewport viewport.Model
 
-	dockerHealth infra.DockerHealth
-	logLines     []string
+	dockerHealth   infra.DockerHealth
+	logLines       []string
+	containerStats map[string]ContainerStats
 
 	containerCursor  int
 	horizontalOffset int
 	wrapMode         bool
 	maxLineWidth     int
+
+	// New features
+	followMode      bool
+	logLevelFilter  string // "", "ERROR", "WARN", "INFO"
+	showingActions  bool
+	actionMenuIndex int
 }
 
 func New() Model {
 	vp := viewport.New(0, 0)
 
 	return Model{
-		sidebar:  components.NewPanel(" ▢ Containers"),
-		logPanel: components.NewPanel(" ☰ Logs"),
-		viewport: vp,
-		focus:    FocusSidebar,
+		viewport:       vp,
+		focus:          FocusList,
+		containerStats: make(map[string]ContainerStats),
 	}
 }
 
@@ -47,21 +60,27 @@ func (m Model) SetSize(w, h int) Model {
 	m.width = w
 	m.height = h
 
-	sidebarWidth := 30
-	logWidth := w - sidebarWidth - 4
-	panelHeight := h - 6
+	// 3-panel layout dimensions
+	listWidth := 28
+	if w < 100 {
+		listWidth = 24
+	}
 
+	logWidth := w - listWidth - 4
 	if logWidth < 40 {
 		logWidth = 40
 	}
-	if panelHeight < 10 {
-		panelHeight = 10
+
+	panelHeight := h - 4
+	statsHeight := 6
+	logHeight := panelHeight - statsHeight - 2
+
+	if logHeight < 10 {
+		logHeight = 10
 	}
 
-	m.sidebar = m.sidebar.SetSize(sidebarWidth, panelHeight)
-	m.logPanel = m.logPanel.SetSize(logWidth, panelHeight)
 	m.viewport.Width = logWidth - 4
-	m.viewport.Height = panelHeight - 4
+	m.viewport.Height = logHeight - 4
 
 	return m
 }
@@ -164,4 +183,87 @@ func (m Model) SelectedContainer() *infra.ContainerInfo {
 		return &m.dockerHealth.Containers[m.containerCursor]
 	}
 	return nil
+}
+
+// New methods for enhanced features
+
+func (m Model) FollowMode() bool {
+	return m.followMode
+}
+
+func (m Model) SetFollowMode(follow bool) Model {
+	m.followMode = follow
+	if follow {
+		m.viewport.GotoBottom()
+	}
+	return m
+}
+
+func (m Model) ToggleFollowMode() Model {
+	return m.SetFollowMode(!m.followMode)
+}
+
+func (m Model) LogLevelFilter() string {
+	return m.logLevelFilter
+}
+
+func (m Model) SetLogLevelFilter(level string) Model {
+	m.logLevelFilter = level
+	return m
+}
+
+func (m Model) CycleLogLevelFilter() Model {
+	switch m.logLevelFilter {
+	case "":
+		m.logLevelFilter = "ERROR"
+	case "ERROR":
+		m.logLevelFilter = "WARN"
+	case "WARN":
+		m.logLevelFilter = "INFO"
+	case "INFO":
+		m.logLevelFilter = ""
+	}
+	return m
+}
+
+func (m Model) ShowingActions() bool {
+	return m.showingActions
+}
+
+func (m Model) SetShowingActions(show bool) Model {
+	m.showingActions = show
+	if !show {
+		m.actionMenuIndex = 0
+	}
+	return m
+}
+
+func (m Model) ActionMenuIndex() int {
+	return m.actionMenuIndex
+}
+
+func (m Model) SetActionMenuIndex(idx int) Model {
+	m.actionMenuIndex = idx
+	return m
+}
+
+func (m Model) ContainerStats() map[string]ContainerStats {
+	return m.containerStats
+}
+
+func (m Model) SetContainerStats(name string, stats ContainerStats) Model {
+	if m.containerStats == nil {
+		m.containerStats = make(map[string]ContainerStats)
+	}
+	m.containerStats[name] = stats
+	return m
+}
+
+func (m Model) GetSelectedContainerStats() ContainerStats {
+	if container := m.SelectedContainer(); container != nil {
+		if stats, ok := m.containerStats[container.Name]; ok {
+			return stats
+		}
+	}
+	return ContainerStats{}
 }

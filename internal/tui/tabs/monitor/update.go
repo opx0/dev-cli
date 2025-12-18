@@ -14,6 +14,11 @@ type KeyMap struct {
 	ToggleWrap  key.Binding
 	ResetScroll key.Binding
 	TriggerRCA  key.Binding
+	Follow      key.Binding
+	LogLevel    key.Binding
+	Actions     key.Binding
+	Top         key.Binding
+	Bottom      key.Binding
 }
 
 func DefaultKeyMap() KeyMap {
@@ -28,7 +33,7 @@ func DefaultKeyMap() KeyMap {
 		),
 		Tab: key.NewBinding(
 			key.WithKeys("tab"),
-			key.WithHelp("Tab", "focus"),
+			key.WithHelp("Tab", "panel"),
 		),
 		ScrollLeft: key.NewBinding(
 			key.WithKeys("H", "shift+left"),
@@ -48,7 +53,27 @@ func DefaultKeyMap() KeyMap {
 		),
 		TriggerRCA: key.NewBinding(
 			key.WithKeys("?"),
-			key.WithHelp("?", "RCA"),
+			key.WithHelp("?", "AI RCA"),
+		),
+		Follow: key.NewBinding(
+			key.WithKeys("f"),
+			key.WithHelp("f", "follow"),
+		),
+		LogLevel: key.NewBinding(
+			key.WithKeys("l"),
+			key.WithHelp("L", "filter"),
+		),
+		Actions: key.NewBinding(
+			key.WithKeys("a", "enter"),
+			key.WithHelp("a", "actions"),
+		),
+		Top: key.NewBinding(
+			key.WithKeys("g"),
+			key.WithHelp("g/G", "top/bottom"),
+		),
+		Bottom: key.NewBinding(
+			key.WithKeys("G"),
+			key.WithHelp("", ""),
 		),
 	}
 }
@@ -58,39 +83,49 @@ func (m Model) Update(msg tea.Msg, keys KeyMap) (Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// Handle action menu if open
+		if m.showingActions {
+			return m.handleActionMenu(msg)
+		}
+
 		switch {
 		case key.Matches(msg, keys.Tab):
-			if m.focus == FocusSidebar {
-				m.focus = FocusMain
-			} else {
-				m.focus = FocusSidebar
+			// Cycle through 3 panels
+			switch m.focus {
+			case FocusList:
+				m.focus = FocusLogs
+			case FocusLogs:
+				m.focus = FocusStats
+			case FocusStats:
+				m.focus = FocusList
 			}
 
 		case key.Matches(msg, keys.Up):
-			if m.focus == FocusSidebar {
-
+			switch m.focus {
+			case FocusList:
 				if len(m.dockerHealth.Containers) > 0 {
 					m.containerCursor--
 					if m.containerCursor < 0 {
 						m.containerCursor = len(m.dockerHealth.Containers) - 1
 					}
 				}
-			} else {
+			case FocusLogs:
 				m.viewport.LineUp(1)
+				m.followMode = false
 			}
 
 		case key.Matches(msg, keys.Down):
-			if m.focus == FocusSidebar {
-
+			switch m.focus {
+			case FocusList:
 				if len(m.dockerHealth.Containers) > 0 {
 					m.containerCursor = (m.containerCursor + 1) % len(m.dockerHealth.Containers)
 				}
-			} else {
+			case FocusLogs:
 				m.viewport.LineDown(1)
 			}
 
 		case key.Matches(msg, keys.ScrollLeft):
-			if !m.wrapMode {
+			if !m.wrapMode && m.focus == FocusLogs {
 				m.horizontalOffset -= 10
 				if m.horizontalOffset < 0 {
 					m.horizontalOffset = 0
@@ -98,7 +133,7 @@ func (m Model) Update(msg tea.Msg, keys KeyMap) (Model, tea.Cmd) {
 			}
 
 		case key.Matches(msg, keys.ScrollRight):
-			if !m.wrapMode {
+			if !m.wrapMode && m.focus == FocusLogs {
 				maxScroll := m.maxLineWidth - (m.width - 34)
 				if maxScroll < 0 {
 					maxScroll = 0
@@ -115,8 +150,34 @@ func (m Model) Update(msg tea.Msg, keys KeyMap) (Model, tea.Cmd) {
 		case key.Matches(msg, keys.ResetScroll):
 			m.horizontalOffset = 0
 
-		case key.Matches(msg, keys.TriggerRCA):
+		case key.Matches(msg, keys.Follow):
+			m = m.ToggleFollowMode()
 
+		case key.Matches(msg, keys.LogLevel):
+			m = m.CycleLogLevelFilter()
+
+		case key.Matches(msg, keys.Actions):
+			if m.focus == FocusList && len(m.dockerHealth.Containers) > 0 {
+				m.showingActions = true
+				m.actionMenuIndex = 0
+			}
+
+		case key.Matches(msg, keys.Top):
+			if m.focus == FocusLogs {
+				m.viewport.GotoTop()
+			} else if m.focus == FocusList && len(m.dockerHealth.Containers) > 0 {
+				m.containerCursor = 0
+			}
+
+		case key.Matches(msg, keys.Bottom):
+			if m.focus == FocusLogs {
+				m.viewport.GotoBottom()
+			} else if m.focus == FocusList && len(m.dockerHealth.Containers) > 0 {
+				m.containerCursor = len(m.dockerHealth.Containers) - 1
+			}
+
+		case key.Matches(msg, keys.TriggerRCA):
+			// TODO: Trigger AI RCA
 		}
 	}
 
@@ -125,4 +186,39 @@ func (m Model) Update(msg tea.Msg, keys KeyMap) (Model, tea.Cmd) {
 	cmds = append(cmds, vpCmd)
 
 	return m, tea.Batch(cmds...)
+}
+
+func (m Model) handleActionMenu(msg tea.KeyMsg) (Model, tea.Cmd) {
+	actionCount := 7 // Number of menu items
+
+	switch msg.String() {
+	case "j", "down":
+		m.actionMenuIndex = (m.actionMenuIndex + 1) % actionCount
+	case "k", "up":
+		m.actionMenuIndex--
+		if m.actionMenuIndex < 0 {
+			m.actionMenuIndex = actionCount - 1
+		}
+	case "esc", "q":
+		m.showingActions = false
+	case "enter":
+		// Execute selected action
+		m.showingActions = false
+		// Actions would be handled here based on actionMenuIndex
+	case "s":
+		// Shell into container
+		m.showingActions = false
+	case "l":
+		// Follow logs
+		m.followMode = true
+		m.showingActions = false
+	case "r":
+		// Restart container
+		m.showingActions = false
+	case "x":
+		// Stop/remove container
+		m.showingActions = false
+	}
+
+	return m, nil
 }
