@@ -51,14 +51,14 @@ func (m Model) renderSidebar(width, height int) string {
 
 	var content strings.Builder
 
-	content.WriteString(headerStyle.Render("⬢ Docker") + "\n")
+	content.WriteString(headerStyle.Render("▢ Docker") + "\n")
 	content.WriteString(m.renderDockerCard() + "\n")
 
-	content.WriteString(headerStyle.Render("≡ Services") + "\n")
+	content.WriteString(headerStyle.Render("☰ Services") + "\n")
 	content.WriteString(m.renderServiceTable(width-4) + "\n")
 
 	if m.gpuStats.Available {
-		content.WriteString(headerStyle.Render("∿ GPU VRAM") + "\n")
+		content.WriteString(headerStyle.Render("▮ GPU") + "\n")
 		content.WriteString(m.renderGPUCard(width-4) + "\n")
 	}
 
@@ -206,12 +206,12 @@ func (m Model) renderTerminal(width, height int) string {
 	}
 
 	var content strings.Builder
-	content.WriteString(headerStyle.Render(">_ Terminal") + " " + cwdStyle.Render(cwdDisplay) + "\n\n")
+	content.WriteString(headerStyle.Render("▸ Terminal") + " " + cwdStyle.Render(cwdDisplay) + "\n\n")
 
 	content.WriteString(m.viewport.View())
 
 	promptStyle := lipgloss.NewStyle().Foreground(theme.Green).Bold(true)
-	content.WriteString("\n" + promptStyle.Render("❯ ") + m.input.View())
+	content.WriteString("\n" + promptStyle.Render("▸ ") + m.input.View())
 
 	return panelStyle.Render(content.String())
 }

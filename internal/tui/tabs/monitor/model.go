@@ -36,8 +36,8 @@ func New() Model {
 	vp := viewport.New(0, 0)
 
 	return Model{
-		sidebar:  components.NewPanel(" ⬢ Containers"),
-		logPanel: components.NewPanel(" ≡ Logs"),
+		sidebar:  components.NewPanel(" ▢ Containers"),
+		logPanel: components.NewPanel(" ☰ Logs"),
 		viewport: vp,
 		focus:    FocusSidebar,
 	}

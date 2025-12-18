@@ -81,10 +81,10 @@ func InitialModel() Model {
 	}
 
 	tabBar := components.NewTabBar([]string{
-		"[1] ⊞ Dashboard",
-		"[2] ~ Monitor",
-		"[3] ? Assist",
-		"[4] ↺ History",
+		"1 ⊞ dash",
+		"2 ~ logs",
+		"3 ? ask",
+		"4 ↻ hist",
 	})
 
 	return Model{

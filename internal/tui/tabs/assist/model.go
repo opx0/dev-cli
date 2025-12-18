@@ -41,8 +41,8 @@ func New(aiClient *llm.HybridClient, aiMode string) Model {
 	vp := viewport.New(0, 0)
 
 	return Model{
-		sidebar:  components.NewPanel(" ∞ AI Model"),
-		chat:     components.NewPanel(" 💬 Chat"),
+		sidebar:  components.NewPanel(" ◈ AI Model"),
+		chat:     components.NewPanel(" ◇ Chat"),
 		viewport: vp,
 		input:    ti,
 		aiClient: aiClient,

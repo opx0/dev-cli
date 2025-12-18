@@ -60,7 +60,7 @@ func (m Model) renderSidebar(width, height int) string {
 		Padding(0, 1)
 
 	var content strings.Builder
-	content.WriteString(headerStyle.Render("∞ AI Mode") + "\n\n")
+	content.WriteString(headerStyle.Render("◈ AI Mode") + "\n\n")
 
 	localItem := " ● Local (Ollama)"
 	cloudItem := " ○ Cloud (Perplexity)"
@@ -111,7 +111,7 @@ func (m Model) renderChatPanel(width, height int) string {
 		posIndicator = countStyle.Render(fmt.Sprintf(" (%d msgs)", msgCount))
 	}
 
-	header := headerStyle.Render("💬 Chat") + posIndicator
+	header := headerStyle.Render("◇ Chat") + posIndicator
 
 	var content strings.Builder
 	content.WriteString(header + "\n\n")
@@ -119,7 +119,7 @@ func (m Model) renderChatPanel(width, height int) string {
 	content.WriteString(m.viewport.View())
 
 	promptStyle := lipgloss.NewStyle().Foreground(theme.Green).Bold(true)
-	content.WriteString("\n" + promptStyle.Render("❯ ") + m.input.View())
+	content.WriteString("\n" + promptStyle.Render("▸ ") + m.input.View())
 
 	return panelStyle.Render(content.String())
 }

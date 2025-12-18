@@ -45,7 +45,7 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 	icon := "✓"
 	iconColor := theme.Green
 	if i.ExitCode != 0 {
-		icon = "✗"
+		icon = "✕"
 		iconColor = theme.Red
 	}
 
