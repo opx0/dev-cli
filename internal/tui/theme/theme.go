@@ -76,15 +76,13 @@ var StatusDesc = lipgloss.NewStyle().
 
 var Tab = lipgloss.NewStyle().
 	Padding(0, 1).
-	Border(lipgloss.RoundedBorder()).
-	BorderForeground(Surface2)
+	Foreground(Overlay0)
 
 var ActiveTab = lipgloss.NewStyle().
 	Padding(0, 1).
-	Border(lipgloss.RoundedBorder()).
-	BorderForeground(Mauve).
 	Foreground(Mauve).
-	Bold(true)
+	Bold(true).
+	Underline(true)
 
 var ModeIndicator = lipgloss.NewStyle().
 	Background(Green).

@@ -30,7 +30,7 @@ func (s StatusBar) Render(keys help.KeyMap, focusLabel string) string {
 	focusIndicator := theme.StatusDesc.Render(" │ [" + focusLabel + "]")
 
 	content := helpView + focusIndicator
-	return theme.StatusBar.Width(s.Width).Render(content)
+	return theme.StatusBar.Width(s.Width).MaxWidth(s.Width).Render(content)
 }
 
 func (s StatusBar) RenderSimple(text string) string {

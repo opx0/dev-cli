@@ -270,11 +270,11 @@ func (m Model) viewMain() string {
 		content = m.history.View()
 	}
 
-	contentHeight := m.height - 4
+	contentHeight := m.height - 3
 	if contentHeight < 10 {
 		contentHeight = 10
 	}
-	styledContent := lipgloss.NewStyle().Height(contentHeight).Render(content)
+	styledContent := lipgloss.NewStyle().Height(contentHeight).MaxWidth(m.width).Render(content)
 
 	focusLabel := m.getFocusLabel()
 	var statusBar string

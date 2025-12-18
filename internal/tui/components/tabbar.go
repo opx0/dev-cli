@@ -52,7 +52,7 @@ func (t TabBar) Render() string {
 		renderedTabs = append(renderedTabs, style.Render(tab))
 	}
 
-	row := lipgloss.JoinHorizontal(lipgloss.Top, renderedTabs...)
+	row := lipgloss.JoinHorizontal(lipgloss.Bottom, renderedTabs...)
 
 	modeStr := ""
 	if t.InsertMode {
@@ -60,12 +60,10 @@ func (t TabBar) Render() string {
 	}
 
 	spacer := ""
-	if t.Width > 80 {
-		spacerWidth := t.Width - lipgloss.Width(row) - lipgloss.Width(modeStr) - 4
-		if spacerWidth > 0 {
-			spacer = strings.Repeat(" ", spacerWidth)
-		}
+	spacerWidth := t.Width - lipgloss.Width(row) - lipgloss.Width(modeStr) - 2
+	if spacerWidth > 0 {
+		spacer = strings.Repeat(" ", spacerWidth)
 	}
 
-	return row + spacer + modeStr + "\n"
+	return row + spacer + modeStr
 }
