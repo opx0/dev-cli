@@ -18,7 +18,7 @@ func Load() *Config {
 	cfg := &Config{
 		OllamaURL:       "http://localhost:11434",
 		OllamaModel:     "qwen2.5-coder:3b-instruct",
-		PerplexityModel: "sonar-pro",
+		PerplexityModel: "sonar-reasoning",
 		ForceLocalLLM:   false,
 	}
 

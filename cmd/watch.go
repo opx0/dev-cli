@@ -23,8 +23,17 @@ var (
 var watchCmd = &cobra.Command{
 	Use:   "watch",
 	Short: "Watch logs for errors and analyze them",
-	Long:  "Stream logs from Docker container or file, detect errors, and analyze with LLM",
-	Run:   runWatch,
+	Long: `Stream logs in real-time and get instant AI analysis when errors are detected.
+Monitors for keywords like 'error', 'exception', 'panic', 'fatal', 'failed'.`,
+	Example: `  # Watch a log file
+  dev-cli watch --file /var/log/syslog
+
+  # Watch Docker container logs
+  dev-cli watch --docker my-container
+
+  # Use cloud AI (Perplexity) for smarter analysis
+  dev-cli watch --docker db --ai cloud`,
+	Run: runWatch,
 }
 
 func init() {

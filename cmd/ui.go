@@ -13,6 +13,15 @@ import (
 var uiCmd = &cobra.Command{
 	Use:   "ui",
 	Short: "Open the interactive dashboard",
+	Long: `Launch the Terminal User Interface (TUI) - your Mission Control.
+
+Tabs:
+  Dashboard  - System status and metrics
+  Monitor    - Real-time log watching with AI
+  Assist     - Chat interface for asking questions
+  History    - Searchable command history
+
+Navigation: Use Tab/Shift+Tab or number keys. Press 'q' to quit.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		p := tea.NewProgram(tui.InitialModel(), tea.WithAltScreen())
 		if _, err := p.Run(); err != nil {

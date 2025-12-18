@@ -23,11 +23,22 @@ var (
 )
 
 var askCmd = &cobra.Command{
-	Use:   "ask",
+	Use:   "ask [query]",
 	Short: "Get help with tool commands or solutions",
-	Long: `Get assistance for DevOps tasks.
-Examples:
-	`,
+	Long: `Get AI-powered assistance for DevOps tasks.
+
+Two modes:
+  1. Tool Mode   - Pass a tool name to get a cheat sheet of useful commands.
+  2. Research    - Ask a natural language question for step-by-step solutions.`,
+	Example: `  # Tool Mode: Get common commands for a tool
+  dev-cli ask tar
+  dev-cli ask kubectl
+  dev-cli ask git "undo commits"
+  dev-cli ask ffmpeg -n 5          # Get 5 commands
+
+  # Research Mode: Ask a question
+  dev-cli ask "how to mount an NTFS drive on Linux"
+  dev-cli ask "fix permission denied on docker.sock"`,
 	Args: cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		query := strings.Join(args, " ")
@@ -98,7 +109,7 @@ func fetchSolutions(query string) {
 	fmt.Printf("\033[90mResearching via %s: %s...\033[0m\n", backend, query)
 
 	s := spinner.New(spinner.CharSets[14], 100*time.Millisecond)
-	s.Suffix = " 🧠 Researching..."
+	s.Suffix = "Researching..."
 	s.Start()
 	result, err := client.Research(query)
 	s.Stop()

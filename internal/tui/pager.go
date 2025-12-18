@@ -106,7 +106,6 @@ func (m PagerModel) View() string {
 	)
 }
 
-// RunPager starts a full-screen pager with the given content
 func RunPager(title, content string) error {
 	p := tea.NewProgram(
 		NewPager(title, content),

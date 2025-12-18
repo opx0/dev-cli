@@ -32,8 +32,19 @@ var (
 var explainCmd = &cobra.Command{
 	Use:   "explain",
 	Short: "Explain why the last command failed",
-	Long: `Analyze command failures from history or inputs to get fixes.
-Can read from log history or accept direct input.`,
+	Long: `Analyze command failures using AI to understand the root cause and get fix suggestions.
+Reads from your command history (requires shell integration via 'dev-cli init zsh').`,
+	Example: `  # Analyze the last failed command
+  dev-cli explain
+
+  # Analyze last 3 failures
+  dev-cli explain --last 3
+
+  # Filter by keyword and time
+  dev-cli explain --filter npm --since 1h
+
+  # Interactive: run the suggested fix directly
+  dev-cli explain -i`,
 	Aliases: []string{"why", "rca"},
 	Run: func(cmd *cobra.Command, args []string) {
 		// In interactive mode, check if stdin is a TTY
