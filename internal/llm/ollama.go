@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 )
@@ -18,6 +19,57 @@ const (
 	FallbackModel    = "qwen2.5-coder:3b-instruct-q8_0"
 	RequestTimeout   = 30 * time.Second
 )
+
+func EnsureOllamaRunning() error {
+
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(DefaultOllamaURL + "/api/tags")
+	if err == nil {
+		resp.Body.Close()
+		return nil
+	}
+
+	fmt.Println("\033[33m⚡ Ollama not running, starting...\033[0m")
+
+	startCmd := exec.Command("docker", "start", "ollama")
+	if err := startCmd.Run(); err == nil {
+
+		return waitForOllama(client, 30*time.Second)
+	}
+
+	fmt.Println("\033[90m  Creating Ollama container...\033[0m")
+	createCmd := exec.Command("docker", "run", "-d",
+		"--name", "ollama",
+		"-p", "11434:11434",
+		"-v", "ollama:/root/.ollama",
+		"--restart", "unless-stopped",
+		"ollama/ollama")
+
+	output, err := createCmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to create Ollama container: %w\n%s", err, string(output))
+	}
+
+	return waitForOllama(client, 60*time.Second)
+}
+
+func waitForOllama(client *http.Client, timeout time.Duration) error {
+	start := time.Now()
+	for {
+		if time.Since(start) > timeout {
+			return fmt.Errorf("timeout waiting for Ollama to start")
+		}
+
+		resp, err := client.Get(DefaultOllamaURL + "/api/tags")
+		if err == nil {
+			resp.Body.Close()
+			fmt.Println("\033[32m✓ Ollama is ready\033[0m")
+			return nil
+		}
+
+		time.Sleep(500 * time.Millisecond)
+	}
+}
 
 type ExplainResult struct {
 	Explanation string `json:"explanation"`

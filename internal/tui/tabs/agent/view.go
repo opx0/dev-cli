@@ -61,17 +61,6 @@ func (m Model) renderHeaderBar(width int) string {
 
 	var widgets []string
 
-	gitStatus := m.GitStatus()
-	if gitStatus.IsRepo {
-		gitStyle := lipgloss.NewStyle().Foreground(theme.Mauve)
-		branchText := "⎇ " + gitStatus.Branch
-		changes := gitStatus.Added + gitStatus.Modified + gitStatus.Deleted + gitStatus.Untracked
-		if changes > 0 {
-			branchText += fmt.Sprintf(" •%d", changes)
-		}
-		widgets = append(widgets, gitStyle.Render(branchText))
-	}
-
 	dockerHealth := m.DockerHealth()
 	if dockerHealth.Available {
 		running := 0
@@ -120,58 +109,91 @@ func (m Model) renderHeaderBar(width int) string {
 }
 
 func (m Model) renderBlocksArea(width, height int) string {
-	panelStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(theme.Surface2).
-		Width(width).
-		Height(height)
-
+	borderColor := theme.Surface2
 	if m.insertMode {
-		panelStyle = panelStyle.BorderForeground(theme.Green)
+		borderColor = theme.Green
 	} else if m.selectedBlock >= 0 {
-		panelStyle = panelStyle.BorderForeground(theme.Mauve)
+		borderColor = theme.Mauve
 	}
 
-	var content strings.Builder
+	maxLines := height - 4
+	if maxLines < 3 {
+		maxLines = 3
+	}
+
+	headerStyle := lipgloss.NewStyle().
+		Foreground(theme.Lavender).
+		Bold(true)
+
+	header := headerStyle.Render("◈ Blocks")
 
 	blocks := m.Blocks()
 	if len(blocks) == 0 {
 		emptyStyle := lipgloss.NewStyle().
 			Foreground(theme.Overlay0).
-			Padding(2, 2)
+			Padding(1, 2)
 
-		welcomeMsg := `  Welcome to dev-cli Agent
+		welcomeMsg := "Welcome to dev-cli Agent\n\nCommands: Type shell command and press Enter\nAI: ? how to fix permission denied\nNav: j/k nav, z fold, i insert"
 
-  Commands:
-    Type any shell command and press Enter
-    Your zsh aliases and functions work here!
-
-  AI Queries:
-    ? how to fix permission denied
-    @fix      - Fix last error
-    @explain  - Explain last command
-
-  Navigation:
-    j/k  - Navigate blocks
-    z    - Fold/unfold block
-    i    - Insert mode
-`
-		content.WriteString(emptyStyle.Render(welcomeMsg))
-	} else {
-		blockWidth := width - 6
-		for i, block := range blocks {
-			content.WriteString(m.renderBlock(block, i, blockWidth) + "\n")
+		lines := make([]string, 0, maxLines)
+		lines = append(lines, header)
+		for _, l := range strings.Split(emptyStyle.Render(welcomeMsg), "\n") {
+			lines = append(lines, l)
+		}
+		for len(lines) < maxLines {
+			lines = append(lines, "")
 		}
 
-		if m.isExecuting {
-			execStyle := lipgloss.NewStyle().
-				Foreground(theme.Yellow).
-				Italic(true)
-			content.WriteString(execStyle.Render("  ◌ Executing..."))
+		panelStyle := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(borderColor).
+			Width(width)
+
+		return panelStyle.Render(strings.Join(lines[:maxLines], "\n"))
+	}
+
+	blockWidth := width - 6
+	var allLines []string
+
+	for i, block := range blocks {
+		blockStr := m.renderBlock(block, i, blockWidth)
+		for _, line := range strings.Split(blockStr, "\n") {
+			allLines = append(allLines, line)
 		}
 	}
 
-	return panelStyle.Render(content.String())
+	if m.isExecuting {
+		execStyle := lipgloss.NewStyle().
+			Foreground(theme.Yellow).
+			Italic(true)
+		allLines = append(allLines, execStyle.Render("  ◌ Executing..."))
+	}
+
+	visibleMax := maxLines - 1
+	start := 0
+	if len(allLines) > visibleMax {
+		start = len(allLines) - visibleMax
+		pct := (start * 100) / len(allLines)
+		header += lipgloss.NewStyle().Foreground(theme.Overlay0).Render(fmt.Sprintf(" [%d%%]", pct))
+	}
+
+	displayLines := make([]string, 0, maxLines)
+	displayLines = append(displayLines, header)
+	displayLines = append(displayLines, allLines[start:]...)
+
+	for len(displayLines) < maxLines {
+		displayLines = append(displayLines, "")
+	}
+	if len(displayLines) > maxLines {
+		displayLines = displayLines[:maxLines]
+	}
+
+	panelStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(borderColor).
+		Width(width)
+
+	return panelStyle.Render(strings.Join(displayLines, "\n"))
 }
 
 func (m Model) renderBlock(block pipeline.Block, index int, width int) string {

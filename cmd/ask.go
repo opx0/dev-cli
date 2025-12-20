@@ -47,6 +47,11 @@ Two modes:
 			os.Setenv("DEV_CLI_FORCE_LOCAL", "1")
 		}
 
+		if err := llm.EnsureOllamaRunning(); err != nil {
+			fmt.Fprintf(os.Stderr, "\033[33m⚠\033[0m Ollama not available: %v\n", err)
+
+		}
+
 		if looksLikeToolName(args) {
 			toolName := args[0]
 			topic := "important and commonly used"

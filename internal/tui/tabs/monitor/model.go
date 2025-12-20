@@ -182,7 +182,6 @@ func (m Model) SelectedContainer() *infra.ContainerInfo {
 	return nil
 }
 
-
 func (m Model) FollowMode() bool {
 	return m.followMode
 }

@@ -194,10 +194,6 @@ func (m Model) GPUStats() infra.GPUStats {
 	return m.State().GPUStats
 }
 
-func (m Model) GitStatus() infra.GitStatus {
-	return m.State().GitStatus
-}
-
 func (m Model) StarshipLine() string {
 	return m.State().StarshipLine
 }
@@ -243,11 +239,6 @@ func (m Model) SetDockerHealth(h infra.DockerHealth) Model {
 
 func (m Model) SetGPUStats(s infra.GPUStats) Model {
 	m.State().SetGPUStats(s)
-	return m
-}
-
-func (m Model) SetGitStatus(g infra.GitStatus) Model {
-	m.State().SetGitStatus(g)
 	return m
 }
 

@@ -31,7 +31,6 @@ type Block struct {
 	AIAnalyzed   bool
 
 	WorkingDir string
-	GitBranch  string
 }
 
 type Suggestion struct {
@@ -53,7 +52,6 @@ type StateStore struct {
 
 	DockerHealth infra.DockerHealth
 	GPUStats     infra.GPUStats
-	GitStatus    infra.GitStatus
 	StarshipLine string
 
 	Suggestions   []Suggestion
@@ -80,12 +78,11 @@ func (s *StateStore) AddBlock(block Block) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// If we're at max capacity, remove oldest block from index
 	if len(s.Blocks) >= s.MaxBlocks {
 		oldest := s.Blocks[0]
 		delete(s.blockIndex, oldest.ID)
 		s.Blocks = s.Blocks[1:]
-		// Rebuild index since indices shifted
+
 		s.rebuildIndex()
 	}
 
@@ -169,7 +166,6 @@ func (s *StateStore) ClearBlocks() {
 	s.SelectedIdx = -1
 }
 
-// rebuildIndex rebuilds the block index from the slice (internal use, must hold lock)
 func (s *StateStore) rebuildIndex() {
 	s.blockIndex = make(map[string]int, len(s.Blocks))
 	for i, block := range s.Blocks {
@@ -181,12 +177,6 @@ func (s *StateStore) SetDockerHealth(h infra.DockerHealth) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.DockerHealth = h
-}
-
-func (s *StateStore) SetGitStatus(g infra.GitStatus) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.GitStatus = g
 }
 
 func (s *StateStore) SetGPUStats(g infra.GPUStats) {
@@ -213,8 +203,6 @@ func (s *StateStore) GetContext() map[string]interface{} {
 
 	return map[string]interface{}{
 		"cwd":             s.Cwd,
-		"git_branch":      s.GitStatus.Branch,
-		"git_changes":     s.GitStatus.Modified + s.GitStatus.Added + s.GitStatus.Deleted,
 		"container_count": len(s.DockerHealth.Containers),
 		"has_last_error":  s.LastError != nil,
 		"recent_commands": len(s.Blocks),

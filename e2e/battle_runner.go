@@ -91,7 +91,7 @@ func testExplain() {
 	startTest("Explain Command (RCA)")
 
 	out := runCLI("explain")
-	if !strings.Contains(out, "docker build") { // Last command
+	if !strings.Contains(out, "docker build") {
 		fmt.Printf("DEBUG: explain output:\n%s\n", out)
 		fatal("Default explain didn't pick up last failure (docker build)")
 	}
@@ -166,7 +166,7 @@ func testWatch() {
 	time.Sleep(1 * time.Second)
 	f.WriteString("Info: System starting...\n")
 	time.Sleep(500 * time.Millisecond)
-	f.WriteString("Error: Connection refused to database\n") // Trigger
+	f.WriteString("Error: Connection refused to database\n")
 
 	select {
 	case <-done:
@@ -215,7 +215,6 @@ func testFix() {
 
 	passTest()
 }
-
 
 func startTest(name string) {
 	fmt.Printf("Testing %s... ", name)

@@ -57,7 +57,7 @@ Reads from your command history (requires shell integration via 'dev-cli init zs
 		}
 
 		if explainExitCode == 130 {
-			return // Skip Ctrl-C
+			return
 		}
 		analyzeEntry(storage.LogEntry{
 			Command:  explainCommand,
@@ -137,6 +137,11 @@ func analyzeFromLog(limit int, filterStr, sinceStr string, interactive bool) {
 
 func analyzeEntry(entry storage.LogEntry, interactive bool) {
 	fmt.Printf("\n\033[31m×\033[0m %s \033[90m(exit %d)\033[0m\n", entry.Command, entry.ExitCode)
+
+	if err := llm.EnsureOllamaRunning(); err != nil {
+		fmt.Fprintf(os.Stderr, "\033[33m⚠\033[0m Ollama not available: %v\n", err)
+		return
+	}
 
 	s := spinner.New(spinner.CharSets[14], 100*time.Millisecond)
 	s.Suffix = " 🧠 Analyzing failure..."

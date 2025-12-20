@@ -3,11 +3,14 @@ package executor
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 	"time"
+
+	"dev-cli/internal/storage"
 )
 
 type Result struct {
@@ -17,6 +20,56 @@ type Result struct {
 	Duration  time.Duration
 	Timestamp time.Time
 	Shell     string
+	Cwd       string
+}
+
+type EventPublisher interface {
+	PublishCommandEvent(command string, exitCode int, duration time.Duration, output string)
+}
+
+var globalDB *sql.DB
+
+func SetDatabase(db *sql.DB) {
+	globalDB = db
+}
+
+func ExecuteAndLog(command string, publisher EventPublisher) Result {
+	return ExecuteAndLogWithTimeout(command, 60*time.Second, publisher)
+}
+
+func ExecuteAndLogWithTimeout(command string, timeout time.Duration, publisher EventPublisher) Result {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	result := ExecuteWithContext(ctx, command)
+
+	if globalDB != nil {
+		logEntry := storage.LogEntry{
+			Command:    result.Command,
+			ExitCode:   result.ExitCode,
+			Output:     truncateOutput(result.Output, 10240),
+			Cwd:        result.Cwd,
+			DurationMs: result.Duration.Milliseconds(),
+			Timestamp:  result.Timestamp.Format(time.RFC3339),
+		}
+		if err := storage.SaveCommand(globalDB, logEntry); err != nil {
+
+			fmt.Fprintf(os.Stderr, "Warning: failed to log command: %v\n", err)
+		}
+	}
+
+	if publisher != nil {
+		publisher.PublishCommandEvent(result.Command, result.ExitCode, result.Duration, result.Output)
+	}
+
+	return result
+}
+
+func truncateOutput(output string, maxLen int) string {
+	if len(output) <= maxLen {
+		return output
+	}
+	return output[:maxLen-20] + "\n...[truncated]..."
 }
 
 func getShell() string {
@@ -45,6 +98,7 @@ func ExecuteWithTimeout(command string, timeout time.Duration) Result {
 func ExecuteWithContext(ctx context.Context, command string) Result {
 	start := time.Now()
 	shell := getShell()
+	cwd, _ := os.Getwd()
 
 	var cmd *exec.Cmd
 	var wrappedCmd string
@@ -63,9 +117,7 @@ func ExecuteWithContext(ctx context.Context, command string) Result {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	cwd, _ := os.Getwd()
 	cmd.Dir = cwd
-
 	cmd.Env = os.Environ()
 
 	hasTermEnv := false
@@ -116,6 +168,7 @@ func ExecuteWithContext(ctx context.Context, command string) Result {
 		Duration:  duration,
 		Timestamp: start,
 		Shell:     shell,
+		Cwd:       cwd,
 	}
 }
 

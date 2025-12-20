@@ -61,7 +61,6 @@ func (p *Plugin) Execute(command string) pipeline.Block {
 		ExitCode:   result.ExitCode,
 		Duration:   result.Duration,
 		WorkingDir: p.state.Cwd,
-		GitBranch:  p.state.GitStatus.Branch,
 	}
 
 	p.state.AddBlock(block)

@@ -186,7 +186,7 @@ func (m Model) Update(msg tea.Msg, keys KeyMap) (Model, tea.Cmd) {
 }
 
 func (m Model) handleActionMenu(msg tea.KeyMsg) (Model, tea.Cmd) {
-	actionCount := 7 // Number of menu items
+	actionCount := 7
 
 	switch msg.String() {
 	case "j", "down":

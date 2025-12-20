@@ -120,7 +120,6 @@ func (m Model) Init() tea.Cmd {
 		checkGPUStats,
 		checkServices,
 		checkDBAndHistory,
-		checkGitStatus,
 	)
 }
 
@@ -163,9 +162,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.history = m.history.SetHistory(msg.history)
 		}
 
-	case gitStatusMsg:
-		m.agent = m.agent.SetGitStatus(msg.status)
-
 	case starshipLineMsg:
 		m.agent = m.agent.SetStarshipLine(msg.line)
 
@@ -177,7 +173,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.tickCount++
 		if m.tickCount >= 10 {
 			m.tickCount = 0
-			cmds = append(cmds, checkGPUStats, checkDockerHealth, checkServices, checkGitStatus, checkStarshipLine)
+			cmds = append(cmds, checkGPUStats, checkDockerHealth, checkServices, checkStarshipLine)
 		}
 
 	case agent.CommandExecutedMsg:
@@ -350,7 +346,6 @@ func fetchContainerLogs(containerID string) tea.Cmd {
 		if err != nil {
 			return containerLogsMsg{containerID: containerID, err: err}
 		}
-		// Don't close shared client
 
 		lines, err := dockerClient.GetContainerLogs(context.Background(), containerID, 100)
 		return containerLogsMsg{
@@ -371,7 +366,6 @@ func checkDockerHealth() tea.Msg {
 			},
 		}
 	}
-	// Don't close shared client
 
 	health := dockerClient.CheckHealth(context.Background())
 	return dockerHealthMsg{health: health}
@@ -399,15 +393,6 @@ func checkDBAndHistory() tea.Msg {
 	}
 
 	return historyLoadedMsg{db: db, history: history}
-}
-
-type gitStatusMsg struct {
-	status infra.GitStatus
-}
-
-func checkGitStatus() tea.Msg {
-	status := infra.GetGitStatus()
-	return gitStatusMsg{status: status}
 }
 
 type starshipLineMsg struct {

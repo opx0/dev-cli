@@ -85,7 +85,7 @@ func runWatch(cmd *cobra.Command, args []string) {
 	maxBuffer := 20
 	errorKeywords := []string{"error", "exception", "panic", "fatal", "failed"}
 
-	lastAnalysis := time.Now().Add(-time.Hour) // Allow immediate
+	lastAnalysis := time.Now().Add(-time.Hour)
 	analysisCooldown := 10 * time.Second
 
 	client := llm.NewHybridClient()

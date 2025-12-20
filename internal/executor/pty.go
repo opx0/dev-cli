@@ -78,7 +78,7 @@ func ExecutePTYWithContext(ctx context.Context, command string) Result {
 		if exitError, ok := err.(*exec.ExitError); ok {
 			exitCode = exitError.ExitCode()
 		} else if err == context.DeadlineExceeded {
-			exitCode = 124 // timeout exit code
+			exitCode = 124
 			outputStr = "Command timed out"
 		} else {
 			exitCode = 1

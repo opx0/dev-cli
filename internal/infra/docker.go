@@ -29,7 +29,6 @@ type DockerClient struct {
 	cli *client.Client
 }
 
-// Singleton pool for Docker client reuse
 var (
 	sharedDockerClient *DockerClient
 	dockerClientOnce   sync.Once
@@ -37,8 +36,6 @@ var (
 	dockerClientMu     sync.RWMutex
 )
 
-// GetSharedDockerClient returns a shared Docker client instance.
-// This reuses the connection instead of creating a new one per request.
 func GetSharedDockerClient() (*DockerClient, error) {
 	dockerClientOnce.Do(func() {
 		sharedDockerClient, dockerClientErr = NewDockerClient()
@@ -48,7 +45,6 @@ func GetSharedDockerClient() (*DockerClient, error) {
 		return nil, dockerClientErr
 	}
 
-	// Verify the client is still valid
 	dockerClientMu.RLock()
 	c := sharedDockerClient
 	dockerClientMu.RUnlock()
@@ -59,7 +55,7 @@ func GetSharedDockerClient() (*DockerClient, error) {
 		if _, err := c.cli.Ping(ctx); err == nil {
 			return c, nil
 		}
-		// Client is stale, recreate
+
 		dockerClientMu.Lock()
 		if sharedDockerClient != nil {
 			sharedDockerClient.Close()
@@ -71,7 +67,6 @@ func GetSharedDockerClient() (*DockerClient, error) {
 	return sharedDockerClient, dockerClientErr
 }
 
-// ResetSharedDockerClient closes and resets the shared client (for testing)
 func ResetSharedDockerClient() {
 	dockerClientMu.Lock()
 	defer dockerClientMu.Unlock()
