@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -15,16 +16,19 @@ import (
 )
 
 var (
-	watchDocker string
-	watchFile   string
-	watchAI     string
+	watchDocker   string
+	watchFile     string
+	watchAI       string
+	watchOpenCode bool
 )
 
 var watchCmd = &cobra.Command{
 	Use:   "watch",
 	Short: "Watch logs for errors and analyze them",
 	Long: `Stream logs in real-time and get instant AI analysis when errors are detected.
-Monitors for keywords like 'error', 'exception', 'panic', 'fatal', 'failed'.`,
+Monitors for keywords like 'error', 'exception', 'panic', 'fatal', 'failed'.
+
+Use --opencode to save error context for OpenCode handoff instead of local analysis.`,
 	Example: `  # Watch a log file
   dev-cli watch --file /var/log/syslog
 
@@ -32,7 +36,10 @@ Monitors for keywords like 'error', 'exception', 'panic', 'fatal', 'failed'.`,
   dev-cli watch --docker my-container
 
   # Use cloud AI (Perplexity) for smarter analysis
-  dev-cli watch --docker db --ai cloud`,
+  dev-cli watch --docker db --ai cloud
+
+  # Save errors for OpenCode handoff (no local AI)
+  dev-cli watch --docker db --opencode`,
 	Run: runWatch,
 }
 
@@ -41,6 +48,7 @@ func init() {
 	watchCmd.Flags().StringVar(&watchDocker, "docker", "", "Docker container ID/name to monitor")
 	watchCmd.Flags().StringVar(&watchFile, "file", "", "Log file path to monitor")
 	watchCmd.Flags().StringVar(&watchAI, "ai", "local", "AI backend to use: 'local' (Ollama) or 'cloud' (Perplexity)")
+	watchCmd.Flags().BoolVar(&watchOpenCode, "opencode", false, "Save error context for OpenCode handoff instead of local analysis")
 }
 
 func runWatch(cmd *cobra.Command, args []string) {
@@ -52,8 +60,10 @@ func runWatch(cmd *cobra.Command, args []string) {
 
 	var logStream io.ReadCloser
 	var err error
+	var source string
 
 	if watchDocker != "" {
+		source = fmt.Sprintf("Docker container: %s", watchDocker)
 		fmt.Printf("\033[36mWatching Docker container: %s\033[0m\n", watchDocker)
 		c := exec.Command("docker", "logs", "-f", "--tail", "20", watchDocker)
 		logStream, err = c.StdoutPipe()
@@ -67,6 +77,7 @@ func runWatch(cmd *cobra.Command, args []string) {
 			os.Exit(1)
 		}
 	} else {
+		source = fmt.Sprintf("Log file: %s", watchFile)
 		fmt.Printf("\033[36mWatching file: %s\033[0m\n", watchFile)
 		c := exec.Command("tail", "-f", "-n", "20", watchFile)
 		logStream, err = c.StdoutPipe()
@@ -88,9 +99,16 @@ func runWatch(cmd *cobra.Command, args []string) {
 	lastAnalysis := time.Now().Add(-time.Hour)
 	analysisCooldown := 10 * time.Second
 
-	client := llm.NewHybridClient()
+	var client *llm.HybridClient
+	if !watchOpenCode {
+		client = llm.NewHybridClient()
+	}
 
-	fmt.Println("\033[90mWaiting for logs... (Ctrl+C to exit)\033[0m")
+	if watchOpenCode {
+		fmt.Println("\033[90mOpenCode mode: errors will be saved for handoff (Ctrl+C to exit)\033[0m")
+	} else {
+		fmt.Println("\033[90mWaiting for logs... (Ctrl+C to exit)\033[0m")
+	}
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -111,24 +129,67 @@ func runWatch(cmd *cobra.Command, args []string) {
 		}
 
 		if isError && time.Since(lastAnalysis) > analysisCooldown {
-			fmt.Println("\n\033[33m[!] Error detected! Analyzing...\033[0m")
-
 			logContent := strings.Join(buffer, "\n")
-			result, err := client.AnalyzeLog(logContent, watchAI)
-			if err != nil {
-				fmt.Printf("\033[31mError analyzing log: %v\033[0m\n", err)
-			} else {
-				source := "Local"
-				if watchAI == "cloud" {
-					source = "Cloud"
+
+			if watchOpenCode {
+				// OpenCode handoff mode
+				fmt.Println("\n\033[33m[!] Error detected! Saving for OpenCode...\033[0m")
+				savePath, err := saveErrorForOpenCode(source, logContent)
+				if err != nil {
+					fmt.Printf("\033[31mError saving context: %v\033[0m\n", err)
+				} else {
+					fmt.Printf("\033[32mSaved to: %s\033[0m\n", savePath)
+					fmt.Printf("\033[36mRun 'opencode' and use: @%s\033[0m\n", savePath)
 				}
-				fmt.Printf("\033[90m> [%s AI]\033[0m \033[1m%s\033[0m\n", source, result.Explanation)
-				if result.Fix != "" {
-					fmt.Printf("\033[32mSuggested Fix: %s\033[0m\n", result.Fix)
+			} else {
+				// Traditional AI analysis mode
+				fmt.Println("\n\033[33m[!] Error detected! Analyzing...\033[0m")
+				result, err := client.AnalyzeLog(logContent, watchAI)
+				if err != nil {
+					fmt.Printf("\033[31mError analyzing log: %v\033[0m\n", err)
+				} else {
+					aiSource := "Local"
+					if watchAI == "cloud" {
+						aiSource = "Cloud"
+					}
+					fmt.Printf("\033[90m> [%s AI]\033[0m \033[1m%s\033[0m\n", aiSource, result.Explanation)
+					if result.Fix != "" {
+						fmt.Printf("\033[32mSuggested Fix: %s\033[0m\n", result.Fix)
+					}
 				}
 			}
 			fmt.Println("\033[90m----------------------------------------\033[0m")
 			lastAnalysis = time.Now()
 		}
 	}
+}
+
+func saveErrorForOpenCode(source, logs string) (string, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+
+	devCliDir := filepath.Join(homeDir, ".devlogs")
+	if err := os.MkdirAll(devCliDir, 0755); err != nil {
+		return "", err
+	}
+
+	var sb strings.Builder
+	sb.WriteString("# Error Context from dev-cli watch\n\n")
+	sb.WriteString(fmt.Sprintf("**Source:** %s\n", source))
+	sb.WriteString(fmt.Sprintf("**Detected:** %s\n\n", time.Now().Format(time.RFC3339)))
+	sb.WriteString("## Logs\n\n")
+	sb.WriteString("```\n")
+	sb.WriteString(logs)
+	sb.WriteString("\n```\n\n")
+	sb.WriteString("## Instructions\n\n")
+	sb.WriteString("Analyze these logs, identify the root cause of the error, and implement a fix.\n")
+
+	savePath := filepath.Join(devCliDir, "last-error.md")
+	if err := os.WriteFile(savePath, []byte(sb.String()), 0644); err != nil {
+		return "", err
+	}
+
+	return savePath, nil
 }

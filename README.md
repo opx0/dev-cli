@@ -112,7 +112,7 @@ sqlite3 ~/.devlogs/history.db "SELECT command, exit_code FROM history WHERE exit
 
 ## Configuration
 
-The CLI is configured via `~/.dev-cli/config.yaml` or Environment Variables.
+The CLI is configured via `~/.devlogs/config.yaml` or Environment Variables.
 
 | Variable                   | Description        | Default                     |
 | -------------------------- | ------------------ | --------------------------- |
