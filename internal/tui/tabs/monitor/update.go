@@ -19,6 +19,37 @@ type KeyMap struct {
 	Actions     key.Binding
 	Top         key.Binding
 	Bottom      key.Binding
+	// Container actions
+	Start   key.Binding
+	Stop    key.Binding
+	Restart key.Binding
+	Remove  key.Binding
+	Pause   key.Binding
+	// Panel switching
+	ShowImages  key.Binding
+	ShowVolumes key.Binding
+	// Confirmation
+	Confirm key.Binding
+	Cancel  key.Binding
+}
+
+// Container action message types
+type ContainerActionMsg struct {
+	Action      string
+	ContainerID string
+	Success     bool
+	Error       error
+}
+
+type RefreshContainersMsg struct{}
+
+type ContainerStatsMsg struct {
+	ContainerID string
+	CPUPercent  float64
+	MemUsed     uint64
+	MemLimit    uint64
+	NetRx       uint64
+	NetTx       uint64
 }
 
 func DefaultKeyMap() KeyMap {
@@ -73,6 +104,45 @@ func DefaultKeyMap() KeyMap {
 		),
 		Bottom: key.NewBinding(
 			key.WithKeys("G"),
+			key.WithHelp("", ""),
+		),
+		// Container actions
+		Start: key.NewBinding(
+			key.WithKeys("s"),
+			key.WithHelp("s", "start"),
+		),
+		Stop: key.NewBinding(
+			key.WithKeys("x"),
+			key.WithHelp("x", "stop"),
+		),
+		Restart: key.NewBinding(
+			key.WithKeys("r"),
+			key.WithHelp("r", "restart"),
+		),
+		Remove: key.NewBinding(
+			key.WithKeys("d"),
+			key.WithHelp("d", "remove"),
+		),
+		Pause: key.NewBinding(
+			key.WithKeys("p"),
+			key.WithHelp("p", "pause"),
+		),
+		// Panel switching
+		ShowImages: key.NewBinding(
+			key.WithKeys("2"),
+			key.WithHelp("1/2/3", "containers/images/volumes"),
+		),
+		ShowVolumes: key.NewBinding(
+			key.WithKeys("3"),
+			key.WithHelp("", ""),
+		),
+		// Confirmation
+		Confirm: key.NewBinding(
+			key.WithKeys("y"),
+			key.WithHelp("y/n", "confirm/cancel"),
+		),
+		Cancel: key.NewBinding(
+			key.WithKeys("n", "esc"),
 			key.WithHelp("", ""),
 		),
 	}

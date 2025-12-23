@@ -2,11 +2,15 @@ package infra
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 )
 
@@ -299,7 +303,41 @@ func (d *DockerClient) GetContainerStats(ctx context.Context, containerID string
 	}
 	defer stats.Body.Close()
 
-	var v types.StatsJSON
+	// Define inline struct matching Docker stats JSON response
+	var v struct {
+		CPUStats struct {
+			CPUUsage struct {
+				TotalUsage uint64 `json:"total_usage"`
+			} `json:"cpu_usage"`
+			SystemUsage uint64 `json:"system_cpu_usage"`
+			OnlineCPUs  uint64 `json:"online_cpus"`
+		} `json:"cpu_stats"`
+		PreCPUStats struct {
+			CPUUsage struct {
+				TotalUsage uint64 `json:"total_usage"`
+			} `json:"cpu_usage"`
+			SystemUsage uint64 `json:"system_cpu_usage"`
+		} `json:"precpu_stats"`
+		MemoryStats struct {
+			Usage uint64            `json:"usage"`
+			Limit uint64            `json:"limit"`
+			Stats map[string]uint64 `json:"stats"`
+		} `json:"memory_stats"`
+		Networks map[string]struct {
+			RxBytes uint64 `json:"rx_bytes"`
+			TxBytes uint64 `json:"tx_bytes"`
+		} `json:"networks"`
+		BlkioStats struct {
+			IoServiceBytesRecursive []struct {
+				Op    string `json:"op"`
+				Value uint64 `json:"value"`
+			} `json:"io_service_bytes_recursive"`
+		} `json:"blkio_stats"`
+		PidsStats struct {
+			Current uint64 `json:"current"`
+		} `json:"pids_stats"`
+	}
+
 	if err := json.NewDecoder(stats.Body).Decode(&v); err != nil {
 		return nil, fmt.Errorf("decode stats failed: %w", err)
 	}
@@ -317,7 +355,11 @@ func (d *DockerClient) GetContainerStats(ctx context.Context, containerID string
 	}
 
 	// Memory
-	snapshot.MemUsed = v.MemoryStats.Usage - v.MemoryStats.Stats["cache"]
+	cacheVal := uint64(0)
+	if v.MemoryStats.Stats != nil {
+		cacheVal = v.MemoryStats.Stats["cache"]
+	}
+	snapshot.MemUsed = v.MemoryStats.Usage - cacheVal
 	snapshot.MemLimit = v.MemoryStats.Limit
 	if snapshot.MemLimit > 0 {
 		snapshot.MemPercent = float64(snapshot.MemUsed) / float64(snapshot.MemLimit) * 100.0
@@ -355,6 +397,8 @@ func (d *DockerClient) InspectContainer(ctx context.Context, containerID string)
 		name = name[1:]
 	}
 
+	createdTime, _ := time.Parse(time.RFC3339Nano, info.Created)
+
 	detail := &ContainerDetail{
 		ContainerInfo: ContainerInfo{
 			ID:      info.ID[:12],
@@ -362,7 +406,7 @@ func (d *DockerClient) InspectContainer(ctx context.Context, containerID string)
 			Image:   info.Config.Image,
 			Status:  info.State.Status,
 			State:   info.State.Status,
-			Created: info.Created,
+			Created: createdTime,
 		},
 		EnvVars: info.Config.Env,
 		Cmd:     info.Config.Cmd,
@@ -398,7 +442,7 @@ func (d *DockerClient) InspectContainer(ctx context.Context, containerID string)
 				fmt.Sscanf(b.HostPort, "%d", &publicPort)
 			}
 			detail.Ports = append(detail.Ports, PortMapping{
-				Private:  portProto.Int(),
+				Private:  uint16(portProto.Int()),
 				Public:   publicPort,
 				Protocol: portProto.Proto(),
 				HostIP:   b.HostIP,
@@ -529,4 +573,3 @@ func (d *DockerClient) PruneVolumes(ctx context.Context) (uint64, error) {
 	}
 	return report.SpaceReclaimed, nil
 }
-

@@ -14,6 +14,14 @@ const (
 	FocusStats
 )
 
+type SubPanel int
+
+const (
+	SubPanelContainers SubPanel = iota
+	SubPanelImages
+	SubPanelVolumes
+)
+
 type ContainerStats struct {
 	CPUHistory []int
 	MemUsed    int
@@ -42,6 +50,15 @@ type Model struct {
 	logLevelFilter  string // "", "ERROR", "WARN", "INFO"
 	showingActions  bool
 	actionMenuIndex int
+
+	// New fields for lazydocker-style features
+	subPanel      SubPanel
+	images        []infra.ImageInfo
+	volumes       []infra.VolumeInfo
+	imageCursor   int
+	volumeCursor  int
+	pendingAction string // action waiting for confirmation (e.g., "remove")
+	statusMessage string // temporary status message
 }
 
 func New() Model {
@@ -51,6 +68,7 @@ func New() Model {
 		viewport:       vp,
 		focus:          FocusList,
 		containerStats: make(map[string]ContainerStats),
+		subPanel:       SubPanelContainers,
 	}
 }
 
@@ -261,4 +279,77 @@ func (m Model) GetSelectedContainerStats() ContainerStats {
 		}
 	}
 	return ContainerStats{}
+}
+
+// SubPanel methods
+func (m Model) SubPanel() SubPanel {
+	return m.subPanel
+}
+
+func (m Model) SetSubPanel(sp SubPanel) Model {
+	m.subPanel = sp
+	return m
+}
+
+// Images methods
+func (m Model) Images() []infra.ImageInfo {
+	return m.images
+}
+
+func (m Model) SetImages(images []infra.ImageInfo) Model {
+	m.images = images
+	return m
+}
+
+func (m Model) ImageCursor() int {
+	return m.imageCursor
+}
+
+func (m Model) SetImageCursor(c int) Model {
+	m.imageCursor = c
+	return m
+}
+
+// Volumes methods
+func (m Model) Volumes() []infra.VolumeInfo {
+	return m.volumes
+}
+
+func (m Model) SetVolumes(volumes []infra.VolumeInfo) Model {
+	m.volumes = volumes
+	return m
+}
+
+func (m Model) VolumeCursor() int {
+	return m.volumeCursor
+}
+
+func (m Model) SetVolumeCursor(c int) Model {
+	m.volumeCursor = c
+	return m
+}
+
+// Pending action methods
+func (m Model) PendingAction() string {
+	return m.pendingAction
+}
+
+func (m Model) SetPendingAction(action string) Model {
+	m.pendingAction = action
+	return m
+}
+
+// Status message methods
+func (m Model) StatusMessage() string {
+	return m.statusMessage
+}
+
+func (m Model) SetStatusMessage(msg string) Model {
+	m.statusMessage = msg
+	return m
+}
+
+func (m Model) ClearStatusMessage() Model {
+	m.statusMessage = ""
+	return m
 }
