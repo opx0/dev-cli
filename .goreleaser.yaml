@@ -61,8 +61,8 @@ changelog:
 
 release:
   github:
-    owner: opx  # Update with your GitHub username/org
-    name: dev-cli
+    owner: opx0  # GitHub username/org
+    name: devops-agent-cli
   draft: false
   prerelease: auto
   name_template: "v{{ .Version }}"
