@@ -1,27 +1,138 @@
 package monitor
 
 import (
-	"dev-cli/internal/infra"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"time"
 
+	"dev-cli/internal/infra"
+	"dev-cli/internal/tui/theme"
+
+	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 type FocusPanel int
 
 const (
-	FocusList FocusPanel = iota
+	FocusServices FocusPanel = iota
+	FocusImages
 	FocusLogs
 	FocusStats
 )
 
-type SubPanel int
+// Service item for bubbles/list
+type serviceItem struct {
+	info infra.ContainerInfo
+}
 
-const (
-	SubPanelContainers SubPanel = iota
-	SubPanelImages
-	SubPanelVolumes
-)
+func (i serviceItem) Title() string       { return i.info.Name }
+func (i serviceItem) Description() string { return i.info.Status }
+func (i serviceItem) FilterValue() string { return i.info.Name }
 
+// Image item for bubbles/list
+type imageItem struct {
+	info infra.ImageInfo
+}
+
+func (i imageItem) Title() string {
+	if len(i.info.Tags) > 0 {
+		return i.info.Tags[0]
+	}
+	return i.info.ID
+}
+func (i imageItem) Description() string { return formatSize(i.info.Size) }
+func (i imageItem) FilterValue() string { return i.Title() }
+
+// Custom delegate for service list
+type serviceDelegate struct{}
+
+func (d serviceDelegate) Height() int                             { return 1 }
+func (d serviceDelegate) Spacing() int                            { return 0 }
+func (d serviceDelegate) Update(_ tea.Msg, _ *list.Model) tea.Cmd { return nil }
+
+func (d serviceDelegate) Render(w io.Writer, m list.Model, index int, listItem list.Item) {
+	i, ok := listItem.(serviceItem)
+	if !ok {
+		return
+	}
+
+	// Status indicator
+	status := "●"
+	statusColor := theme.Green
+	if i.info.State != "running" {
+		status = "○"
+		statusColor = theme.Red
+	}
+
+	name := i.info.Name
+	maxWidth := m.Width() - 6
+	if maxWidth < 5 {
+		maxWidth = 5
+	}
+	if len(name) > maxWidth {
+		name = name[:maxWidth-1] + "…"
+	}
+
+	statusStyle := lipgloss.NewStyle().Foreground(statusColor)
+	textStyle := lipgloss.NewStyle().Foreground(theme.Text)
+
+	line := fmt.Sprintf(" %s %s", statusStyle.Render(status), textStyle.Render(name))
+
+	if index == m.Index() {
+		line = lipgloss.NewStyle().
+			Background(theme.Surface1).
+			Foreground(theme.Lavender).
+			Bold(true).
+			Width(m.Width()).
+			Render(line)
+	}
+
+	fmt.Fprint(w, line)
+}
+
+// Custom delegate for image list
+type imageDelegate struct{}
+
+func (d imageDelegate) Height() int                             { return 1 }
+func (d imageDelegate) Spacing() int                            { return 0 }
+func (d imageDelegate) Update(_ tea.Msg, _ *list.Model) tea.Cmd { return nil }
+
+func (d imageDelegate) Render(w io.Writer, m list.Model, index int, listItem list.Item) {
+	i, ok := listItem.(imageItem)
+	if !ok {
+		return
+	}
+
+	tag := i.Title()
+	maxWidth := m.Width() - 4
+	if maxWidth < 5 {
+		maxWidth = 5
+	}
+	if len(tag) > maxWidth {
+		tag = tag[:maxWidth-1] + "…"
+	}
+
+	textStyle := lipgloss.NewStyle().Foreground(theme.Text)
+	line := fmt.Sprintf(" %s", textStyle.Render(tag))
+
+	if index == m.Index() {
+		line = lipgloss.NewStyle().
+			Background(theme.Surface1).
+			Foreground(theme.Lavender).
+			Bold(true).
+			Width(m.Width()).
+			Render(line)
+	}
+
+	fmt.Fprint(w, line)
+}
+
+// Stats for display
 type ContainerStats struct {
 	CPUHistory []int
 	MemUsed    int
@@ -35,40 +146,56 @@ type Model struct {
 	height int
 	focus  FocusPanel
 
-	viewport viewport.Model
+	// Lists (using bubbles/list like history sidebar)
+	servicesList list.Model
+	imagesList   list.Model
+	viewport     viewport.Model
 
-	dockerHealth   infra.DockerHealth
+	// Data
+	services       []infra.ContainerInfo
+	images         []infra.ImageInfo
 	logLines       []string
 	containerStats map[string]ContainerStats
 
-	containerCursor  int
-	horizontalOffset int
-	wrapMode         bool
-	maxLineWidth     int
+	// Log recording
+	isRecording   bool
+	recordingFile *os.File
+	recordingPath string
 
-	followMode      bool
-	logLevelFilter  string // "", "ERROR", "WARN", "INFO"
-	showingActions  bool
-	actionMenuIndex int
-
-	// New fields for lazydocker-style features
-	subPanel      SubPanel
-	images        []infra.ImageInfo
-	volumes       []infra.VolumeInfo
-	imageCursor   int
-	volumeCursor  int
-	pendingAction string // action waiting for confirmation (e.g., "remove")
-	statusMessage string // temporary status message
+	// UI state
+	followMode     bool
+	logLevelFilter string
 }
 
 func New() Model {
+	// Services list
+	sDelegate := serviceDelegate{}
+	sList := list.New([]list.Item{}, sDelegate, 0, 0)
+	sList.SetShowHelp(false)
+	sList.SetShowTitle(false)
+	sList.SetShowStatusBar(false)
+	sList.SetFilteringEnabled(false)
+	sList.DisableQuitKeybindings()
+	sList.Styles.NoItems = lipgloss.NewStyle().Foreground(theme.Overlay0).Padding(1)
+
+	// Images list
+	iDelegate := imageDelegate{}
+	iList := list.New([]list.Item{}, iDelegate, 0, 0)
+	iList.SetShowHelp(false)
+	iList.SetShowTitle(false)
+	iList.SetShowStatusBar(false)
+	iList.SetFilteringEnabled(false)
+	iList.DisableQuitKeybindings()
+	iList.Styles.NoItems = lipgloss.NewStyle().Foreground(theme.Overlay0).Padding(1)
+
 	vp := viewport.New(0, 0)
 
 	return Model{
+		servicesList:   sList,
+		imagesList:     iList,
 		viewport:       vp,
-		focus:          FocusList,
+		focus:          FocusServices,
 		containerStats: make(map[string]ContainerStats),
-		subPanel:       SubPanelContainers,
 	}
 }
 
@@ -76,137 +203,189 @@ func (m Model) SetSize(w, h int) Model {
 	m.width = w
 	m.height = h
 
-	listWidth := 28
+	// Left sidebar width
+	sidebarWidth := 28
 	if w < 100 {
-		listWidth = 24
+		sidebarWidth = 24
 	}
 
-	logWidth := w - listWidth - 4
+	// Calculate panel heights
+	panelHeight := h - 4
+	servicesHeight := (panelHeight - 8) / 2 // Half for services
+	imagesHeight := (panelHeight - 8) / 2   // Half for images
+	_ = 6                                   // Stats height (used in view.go)
+
+	if servicesHeight < 5 {
+		servicesHeight = 5
+	}
+	if imagesHeight < 5 {
+		imagesHeight = 5
+	}
+
+	// Set list dimensions
+	m.servicesList.SetWidth(sidebarWidth - 4)
+	m.servicesList.SetHeight(servicesHeight - 2)
+	m.imagesList.SetWidth(sidebarWidth - 4)
+	m.imagesList.SetHeight(imagesHeight - 2)
+
+	// Viewport for logs
+	logWidth := w - sidebarWidth - 4
 	if logWidth < 40 {
 		logWidth = 40
 	}
-
-	panelHeight := h - 4
-	statsHeight := 6
-	logHeight := panelHeight - statsHeight - 2
-
-	if logHeight < 10 {
-		logHeight = 10
-	}
-
 	m.viewport.Width = logWidth - 4
-	m.viewport.Height = logHeight - 4
+	m.viewport.Height = panelHeight - 4
 
 	return m
 }
 
-func (m Model) SetFocus(f FocusPanel) Model {
-	m.focus = f
+// SetServices updates the services list
+func (m Model) SetServices(containers []infra.ContainerInfo) Model {
+	m.services = containers
+
+	items := make([]list.Item, len(containers))
+	for i, c := range containers {
+		items[i] = serviceItem{info: c}
+	}
+	m.servicesList.SetItems(items)
+
 	return m
 }
 
-func (m Model) SetDockerHealth(h infra.DockerHealth) Model {
-	m.dockerHealth = h
+// SetImages updates the images list
+func (m Model) SetImages(images []infra.ImageInfo) Model {
+	m.images = images
+
+	items := make([]list.Item, len(images))
+	for i, img := range images {
+		items[i] = imageItem{info: img}
+	}
+	m.imagesList.SetItems(items)
+
 	return m
 }
 
+// SetLogLines updates the log content
 func (m Model) SetLogLines(lines []string) Model {
 	m.logLines = lines
 
-	m.maxLineWidth = 0
-	for _, line := range lines {
-		if len(line) > m.maxLineWidth {
-			m.maxLineWidth = len(line)
+	// If recording, write to file
+	if m.isRecording && m.recordingFile != nil {
+		for _, line := range lines {
+			m.recordingFile.WriteString(line + "\n")
 		}
 	}
+
 	return m
 }
 
-func (m Model) Focus() FocusPanel {
-	return m.focus
-}
-
-func (m Model) ContainerCursor() int {
-	return m.containerCursor
-}
-
-func (m Model) SetContainerCursor(c int) Model {
-	m.containerCursor = c
-	return m
-}
-
-func (m Model) HorizontalOffset() int {
-	return m.horizontalOffset
-}
-
-func (m Model) SetHorizontalOffset(o int) Model {
-	m.horizontalOffset = o
-	return m
-}
-
-func (m Model) WrapMode() bool {
-	return m.wrapMode
-}
-
-func (m Model) SetWrapMode(w bool) Model {
-	m.wrapMode = w
-	if w {
-		m.horizontalOffset = 0
+// Recording methods
+func (m Model) StartRecording() Model {
+	if m.isRecording {
+		return m
 	}
+
+	// Create ~/.devlogs directory
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return m
+	}
+
+	logDir := filepath.Join(homeDir, ".devlogs")
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		return m
+	}
+
+	// Get selected service name
+	serviceName := "unknown"
+	if sel := m.servicesList.SelectedItem(); sel != nil {
+		if s, ok := sel.(serviceItem); ok {
+			serviceName = s.info.Name
+		}
+	}
+
+	// Create log file
+	timestamp := time.Now().Format("2006-01-02_15-04-05")
+	filename := fmt.Sprintf("docker-%s-%s.log", serviceName, timestamp)
+	m.recordingPath = filepath.Join(logDir, filename)
+
+	file, err := os.Create(m.recordingPath)
+	if err != nil {
+		return m
+	}
+
+	m.recordingFile = file
+	m.isRecording = true
+
+	// Write header
+	m.recordingFile.WriteString(fmt.Sprintf("# Docker Log Recording: %s\n", serviceName))
+	m.recordingFile.WriteString(fmt.Sprintf("# Started: %s\n\n", time.Now().Format(time.RFC3339)))
+
 	return m
 }
 
-func (m Model) ToggleWrapMode() Model {
-	return m.SetWrapMode(!m.wrapMode)
+func (m Model) StopRecording() Model {
+	if !m.isRecording {
+		return m
+	}
+
+	if m.recordingFile != nil {
+		m.recordingFile.WriteString(fmt.Sprintf("\n# Stopped: %s\n", time.Now().Format(time.RFC3339)))
+		m.recordingFile.Close()
+		m.recordingFile = nil
+	}
+
+	m.isRecording = false
+	return m
 }
 
-func (m Model) DockerHealth() infra.DockerHealth {
-	return m.dockerHealth
+func (m Model) ToggleRecording() Model {
+	if m.isRecording {
+		return m.StopRecording()
+	}
+	return m.StartRecording()
 }
 
-func (m Model) LogLines() []string {
-	return m.logLines
+func (m Model) IsRecording() bool {
+	return m.isRecording
 }
 
-func (m Model) MaxLineWidth() int {
-	return m.maxLineWidth
+func (m Model) RecordingPath() string {
+	return m.recordingPath
 }
 
-func (m Model) Width() int {
-	return m.width
-}
-
-func (m Model) Height() int {
-	return m.height
-}
-
-func (m Model) Viewport() viewport.Model {
-	return m.viewport
-}
+// Getters
+func (m Model) Focus() FocusPanel               { return m.focus }
+func (m Model) SetFocus(f FocusPanel) Model     { m.focus = f; return m }
+func (m Model) Width() int                      { return m.width }
+func (m Model) Height() int                     { return m.height }
+func (m Model) Services() []infra.ContainerInfo { return m.services }
+func (m Model) Images() []infra.ImageInfo       { return m.images }
+func (m Model) LogLines() []string              { return m.logLines }
+func (m Model) Viewport() viewport.Model        { return m.viewport }
+func (m Model) ServicesList() list.Model        { return m.servicesList }
+func (m Model) ImagesList() list.Model          { return m.imagesList }
+func (m Model) FollowMode() bool                { return m.followMode }
+func (m Model) LogLevelFilter() string          { return m.logLevelFilter }
 
 func (m Model) SetViewport(vp viewport.Model) Model {
 	m.viewport = vp
 	return m
 }
 
-func (m Model) ContainerCount() int {
-	return len(m.dockerHealth.Containers)
+func (m Model) SetServicesList(l list.Model) Model {
+	m.servicesList = l
+	return m
 }
 
-func (m Model) SelectedContainer() *infra.ContainerInfo {
-	if m.containerCursor >= 0 && m.containerCursor < len(m.dockerHealth.Containers) {
-		return &m.dockerHealth.Containers[m.containerCursor]
-	}
-	return nil
+func (m Model) SetImagesList(l list.Model) Model {
+	m.imagesList = l
+	return m
 }
 
-func (m Model) FollowMode() bool {
-	return m.followMode
-}
-
-func (m Model) SetFollowMode(follow bool) Model {
-	m.followMode = follow
-	if follow {
+func (m Model) SetFollowMode(f bool) Model {
+	m.followMode = f
+	if f {
 		m.viewport.GotoBottom()
 	}
 	return m
@@ -214,10 +393,6 @@ func (m Model) SetFollowMode(follow bool) Model {
 
 func (m Model) ToggleFollowMode() Model {
 	return m.SetFollowMode(!m.followMode)
-}
-
-func (m Model) LogLevelFilter() string {
-	return m.logLevelFilter
 }
 
 func (m Model) SetLogLevelFilter(level string) Model {
@@ -239,27 +414,26 @@ func (m Model) CycleLogLevelFilter() Model {
 	return m
 }
 
-func (m Model) ShowingActions() bool {
-	return m.showingActions
-}
-
-func (m Model) SetShowingActions(show bool) Model {
-	m.showingActions = show
-	if !show {
-		m.actionMenuIndex = 0
+// Selected items
+func (m Model) SelectedService() *infra.ContainerInfo {
+	if sel := m.servicesList.SelectedItem(); sel != nil {
+		if s, ok := sel.(serviceItem); ok {
+			return &s.info
+		}
 	}
-	return m
+	return nil
 }
 
-func (m Model) ActionMenuIndex() int {
-	return m.actionMenuIndex
+func (m Model) SelectedImage() *infra.ImageInfo {
+	if sel := m.imagesList.SelectedItem(); sel != nil {
+		if i, ok := sel.(imageItem); ok {
+			return &i.info
+		}
+	}
+	return nil
 }
 
-func (m Model) SetActionMenuIndex(idx int) Model {
-	m.actionMenuIndex = idx
-	return m
-}
-
+// Stats
 func (m Model) ContainerStats() map[string]ContainerStats {
 	return m.containerStats
 }
@@ -272,84 +446,25 @@ func (m Model) SetContainerStats(name string, stats ContainerStats) Model {
 	return m
 }
 
-func (m Model) GetSelectedContainerStats() ContainerStats {
-	if container := m.SelectedContainer(); container != nil {
-		if stats, ok := m.containerStats[container.Name]; ok {
+func (m Model) GetSelectedServiceStats() ContainerStats {
+	if svc := m.SelectedService(); svc != nil {
+		if stats, ok := m.containerStats[svc.Name]; ok {
 			return stats
 		}
 	}
 	return ContainerStats{}
 }
 
-// SubPanel methods
-func (m Model) SubPanel() SubPanel {
-	return m.subPanel
-}
-
-func (m Model) SetSubPanel(sp SubPanel) Model {
-	m.subPanel = sp
-	return m
-}
-
-// Images methods
-func (m Model) Images() []infra.ImageInfo {
-	return m.images
-}
-
-func (m Model) SetImages(images []infra.ImageInfo) Model {
-	m.images = images
-	return m
-}
-
-func (m Model) ImageCursor() int {
-	return m.imageCursor
-}
-
-func (m Model) SetImageCursor(c int) Model {
-	m.imageCursor = c
-	return m
-}
-
-// Volumes methods
-func (m Model) Volumes() []infra.VolumeInfo {
-	return m.volumes
-}
-
-func (m Model) SetVolumes(volumes []infra.VolumeInfo) Model {
-	m.volumes = volumes
-	return m
-}
-
-func (m Model) VolumeCursor() int {
-	return m.volumeCursor
-}
-
-func (m Model) SetVolumeCursor(c int) Model {
-	m.volumeCursor = c
-	return m
-}
-
-// Pending action methods
-func (m Model) PendingAction() string {
-	return m.pendingAction
-}
-
-func (m Model) SetPendingAction(action string) Model {
-	m.pendingAction = action
-	return m
-}
-
-// Status message methods
-func (m Model) StatusMessage() string {
-	return m.statusMessage
-}
-
-func (m Model) SetStatusMessage(msg string) Model {
-	m.statusMessage = msg
-	return m
-}
-
-func (m Model) ClearStatusMessage() Model {
-	m.statusMessage = ""
-	return m
+// Helper
+func formatSize(size int64) string {
+	const unit = 1024
+	if size < unit {
+		return fmt.Sprintf("%d B", size)
+	}
+	div, exp := int64(unit), 0
+	for n := size / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(size)/float64(div), "KMGTPE"[exp])
 }

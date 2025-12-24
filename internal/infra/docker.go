@@ -4,7 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sync"
+	"io"
+	"strings"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
@@ -93,54 +94,8 @@ type DockerClient struct {
 	cli *client.Client
 }
 
-var (
-	sharedDockerClient *DockerClient
-	dockerClientOnce   sync.Once
-	dockerClientErr    error
-	dockerClientMu     sync.RWMutex
-)
-
-func GetSharedDockerClient() (*DockerClient, error) {
-	dockerClientOnce.Do(func() {
-		sharedDockerClient, dockerClientErr = NewDockerClient()
-	})
-
-	if dockerClientErr != nil {
-		return nil, dockerClientErr
-	}
-
-	dockerClientMu.RLock()
-	c := sharedDockerClient
-	dockerClientMu.RUnlock()
-
-	if c != nil && c.cli != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		if _, err := c.cli.Ping(ctx); err == nil {
-			return c, nil
-		}
-
-		dockerClientMu.Lock()
-		if sharedDockerClient != nil {
-			sharedDockerClient.Close()
-		}
-		sharedDockerClient, dockerClientErr = NewDockerClient()
-		dockerClientMu.Unlock()
-	}
-
-	return sharedDockerClient, dockerClientErr
-}
-
-func ResetSharedDockerClient() {
-	dockerClientMu.Lock()
-	defer dockerClientMu.Unlock()
-	if sharedDockerClient != nil {
-		sharedDockerClient.Close()
-		sharedDockerClient = nil
-	}
-	dockerClientOnce = sync.Once{}
-	dockerClientErr = nil
-}
+// Note: Shared client management has moved to Registry.
+// Use GetRegistry().Docker() instead of the deprecated GetSharedDockerClient().
 
 func NewDockerClient() (*DockerClient, error) {
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
@@ -572,4 +527,168 @@ func (d *DockerClient) PruneVolumes(ctx context.Context) (uint64, error) {
 		return 0, err
 	}
 	return report.SpaceReclaimed, nil
+}
+
+// =============================================================================
+// Log Streaming
+// =============================================================================
+
+// StreamLogs streams container logs to a LogSink.
+// Returns when context is cancelled or an error occurs.
+func (d *DockerClient) StreamLogs(ctx context.Context, containerID string, containerName string, sink LogSink) error {
+	options := container.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Follow:     true,
+		Timestamps: true,
+	}
+
+	reader, err := d.cli.ContainerLogs(ctx, containerID, options)
+	if err != nil {
+		return fmt.Errorf("stream logs: %w", err)
+	}
+	defer reader.Close()
+
+	return d.processLogStream(ctx, reader, containerName, sink, nil, nil)
+}
+
+// StreamLogsToWriter streams container logs directly to an io.Writer.
+func (d *DockerClient) StreamLogsToWriter(ctx context.Context, containerID string, w io.Writer) error {
+	options := container.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Follow:     true,
+		Timestamps: true,
+	}
+
+	reader, err := d.cli.ContainerLogs(ctx, containerID, options)
+	if err != nil {
+		return fmt.Errorf("stream logs: %w", err)
+	}
+	defer reader.Close()
+
+	// Docker multiplexes stdout/stderr with 8-byte header
+	buf := make([]byte, 8192)
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		n, err := reader.Read(buf)
+		if n > 0 {
+			// Skip 8-byte header and write content
+			data := buf[:n]
+			for len(data) > 8 {
+				// Header: [stream_type][0][0][0][size1][size2][size3][size4]
+				size := int(data[4])<<24 | int(data[5])<<16 | int(data[6])<<8 | int(data[7])
+				if size <= 0 || size > len(data)-8 {
+					break
+				}
+				if _, werr := w.Write(data[8 : 8+size]); werr != nil {
+					return werr
+				}
+				if _, werr := w.Write([]byte{'\n'}); werr != nil {
+					return werr
+				}
+				data = data[8+size:]
+			}
+		}
+		if err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return err
+		}
+	}
+}
+
+// StreamLogsWithSnapshots streams logs and captures GPU/container stats at intervals.
+func (d *DockerClient) StreamLogsWithSnapshots(ctx context.Context, containerID string, containerName string, sink LogSink, gpu GPUProvider, snapshotInterval time.Duration) error {
+	options := container.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Follow:     true,
+		Timestamps: true,
+	}
+
+	reader, err := d.cli.ContainerLogs(ctx, containerID, options)
+	if err != nil {
+		return fmt.Errorf("stream logs: %w", err)
+	}
+	defer reader.Close()
+
+	return d.processLogStream(ctx, reader, containerName, sink, gpu, &snapshotInterval)
+}
+
+// processLogStream handles the common log processing logic.
+func (d *DockerClient) processLogStream(ctx context.Context, reader io.ReadCloser, containerName string, sink LogSink, gpu GPUProvider, snapshotInterval *time.Duration) error {
+	buf := make([]byte, 8192)
+	var lastSnapshot time.Time
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		n, err := reader.Read(buf)
+		if n > 0 {
+			data := buf[:n]
+			for len(data) > 8 {
+				// Parse Docker log header
+				streamType := data[0] // 1 = stdout, 2 = stderr
+				size := int(data[4])<<24 | int(data[5])<<16 | int(data[6])<<8 | int(data[7])
+				if size <= 0 || size > len(data)-8 {
+					break
+				}
+
+				content := string(data[8 : 8+size])
+				stream := "stdout"
+				if streamType == 2 {
+					stream = "stderr"
+				}
+
+				// Parse timestamp from content (RFC3339 format at start)
+				timestamp := time.Now()
+				if len(content) > 30 && content[4] == '-' {
+					if t, perr := time.Parse(time.RFC3339Nano, strings.TrimSpace(content[:30])); perr == nil {
+						timestamp = t
+						content = strings.TrimSpace(content[30:])
+					}
+				}
+
+				entry := LogEntry{
+					Timestamp: timestamp,
+					Container: containerName,
+					Stream:    stream,
+					Message:   strings.TrimSuffix(content, "\n"),
+				}
+
+				// Add snapshots at interval
+				if snapshotInterval != nil && time.Since(lastSnapshot) >= *snapshotInterval {
+					if gpu != nil {
+						gpuStats := gpu.GetStats()
+						entry.GPUSnapshot = &gpuStats
+					}
+					// Could add container stats here too
+					lastSnapshot = time.Now()
+				}
+
+				if werr := sink.Write(entry); werr != nil {
+					return werr
+				}
+
+				data = data[8+size:]
+			}
+		}
+		if err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return err
+		}
+	}
 }
