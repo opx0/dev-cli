@@ -139,7 +139,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case dockerHealthMsg:
 		m.agent = m.agent.SetDockerHealth(msg.health)
-		m.containers = m.containers.SetDockerHealth(msg.health)
+		m.containers = m.containers.SetServices(msg.health.Containers)
 		if msg.health.Available {
 			m.state = StateMain
 			if len(msg.health.Containers) > 0 {
@@ -199,8 +199,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.activeTab = TabAgent
 			case "2":
 				m.activeTab = TabContainers
-				if m.containers.SelectedContainer() != nil {
-					cmds = append(cmds, fetchContainerLogs(m.containers.SelectedContainer().ID))
+				if m.containers.SelectedService() != nil {
+					cmds = append(cmds, fetchContainerLogs(m.containers.SelectedService().ID))
 				}
 			case "3":
 				m.activeTab = TabHistory
@@ -218,13 +218,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 
 		case TabContainers:
-			oldCursor := m.containers.ContainerCursor()
+			oldCursor := m.containers.ServicesList().Index()
 			m.containers, cmd = m.containers.Update(msg, monitor.DefaultKeyMap())
 			cmds = append(cmds, cmd)
 
-			if m.containers.ContainerCursor() != oldCursor {
-				if container := m.containers.SelectedContainer(); container != nil {
-					cmds = append(cmds, fetchContainerLogs(container.ID))
+			if m.containers.ServicesList().Index() != oldCursor {
+				if svc := m.containers.SelectedService(); svc != nil {
+					cmds = append(cmds, fetchContainerLogs(svc.ID))
 				}
 			}
 
@@ -317,8 +317,10 @@ func (m Model) getFocusLabel() string {
 		return "agent"
 	case TabContainers:
 		switch m.containers.Focus() {
-		case monitor.FocusList:
-			return "containers"
+		case monitor.FocusServices:
+			return "services"
+		case monitor.FocusImages:
+			return "images"
 		case monitor.FocusLogs:
 			return "logs"
 		case monitor.FocusStats:
