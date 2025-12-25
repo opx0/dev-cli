@@ -25,6 +25,26 @@ const (
 
 	EventSystemAlert EventType = "system.alert"
 	EventSystemStats EventType = "system.stats"
+
+	// Workflow events
+	EventWorkflowStart      EventType = "workflow.start"
+	EventWorkflowStep       EventType = "workflow.step"
+	EventWorkflowCheckpoint EventType = "workflow.checkpoint"
+	EventWorkflowComplete   EventType = "workflow.complete"
+	EventWorkflowRollback   EventType = "workflow.rollback"
+
+	// RCA (Root Cause Analysis) events
+	EventRCAStart     EventType = "rca.start"
+	EventRCANodeFound EventType = "rca.node_found"
+	EventRCAComplete  EventType = "rca.complete"
+	EventRCACacheHit  EventType = "rca.cache_hit"
+
+	// Remediation events
+	EventRemediationPending    EventType = "remediation.pending"
+	EventRemediationApproved   EventType = "remediation.approved"
+	EventRemediationExecuted   EventType = "remediation.executed"
+	EventRemediationRolledBack EventType = "remediation.rollback"
+	EventRemediationSkipped    EventType = "remediation.skipped"
 )
 
 type Event struct {

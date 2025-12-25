@@ -11,7 +11,7 @@ import (
 )
 
 func (m Model) View() string {
-	// Left sidebar width
+
 	sidebarWidth := 28
 	if m.width < 100 {
 		sidebarWidth = 24
@@ -24,7 +24,6 @@ func (m Model) View() string {
 
 	panelHeight := m.height - 4
 
-	// Calculate heights for left panels
 	servicesHeight := (panelHeight - 8) / 2
 	imagesHeight := (panelHeight - 8) / 2
 	statsHeight := 6
@@ -36,14 +35,12 @@ func (m Model) View() string {
 		imagesHeight = 5
 	}
 
-	// Render left column panels
 	servicesPanel := m.renderServicesPanel(sidebarWidth, servicesHeight)
 	imagesPanel := m.renderImagesPanel(sidebarWidth, imagesHeight)
 	statsPanel := m.renderStatsPanel(sidebarWidth, statsHeight)
 
 	leftColumn := lipgloss.JoinVertical(lipgloss.Left, servicesPanel, imagesPanel, statsPanel)
 
-	// Render logs panel
 	logsPanel := m.renderLogsPanel(logWidth, panelHeight)
 
 	return lipgloss.JoinHorizontal(lipgloss.Top, leftColumn, logsPanel)
@@ -152,7 +149,6 @@ func (m Model) renderStatsPanel(width, height int) string {
 	stats := m.GetSelectedServiceStats()
 	labelStyle := lipgloss.NewStyle().Foreground(theme.Overlay0).Width(4)
 
-	// CPU sparkline
 	content.WriteString(labelStyle.Render("CPU "))
 	sparkWidth := width - 12
 	if sparkWidth < 5 {
@@ -170,7 +166,6 @@ func (m Model) renderStatsPanel(width, height int) string {
 	}
 	content.WriteString("\n")
 
-	// Memory bar
 	content.WriteString(labelStyle.Render("MEM "))
 	if stats.MemTotal > 0 {
 		memBar := components.NewProgressBar(stats.MemUsed, stats.MemTotal).
@@ -182,7 +177,6 @@ func (m Model) renderStatsPanel(width, height int) string {
 	}
 	content.WriteString("\n")
 
-	// Network
 	content.WriteString(labelStyle.Render("NET "))
 	netStyle := lipgloss.NewStyle().Foreground(theme.Overlay0)
 	if stats.NetIn > 0 || stats.NetOut > 0 {
@@ -218,7 +212,6 @@ func (m Model) renderLogsPanel(width, height int) string {
 
 	header := headerStyle.Render("≡ Logs")
 
-	// Show selected service name
 	if svc := m.SelectedService(); svc != nil {
 		serviceName := svc.Name
 		if len(serviceName) > 15 {
@@ -227,7 +220,6 @@ func (m Model) renderLogsPanel(width, height int) string {
 		header += dimStyle.Render(" (" + serviceName + ")")
 	}
 
-	// Recording indicator
 	if m.isRecording {
 		recBadge := lipgloss.NewStyle().
 			Background(theme.Red).
@@ -238,7 +230,6 @@ func (m Model) renderLogsPanel(width, height int) string {
 		header += " " + recBadge
 	}
 
-	// Follow mode indicator
 	if m.followMode {
 		followBadge := lipgloss.NewStyle().
 			Background(theme.Green).
@@ -248,7 +239,6 @@ func (m Model) renderLogsPanel(width, height int) string {
 		header += " " + followBadge
 	}
 
-	// Log level filter indicator
 	if m.logLevelFilter != "" {
 		filterBadge := lipgloss.NewStyle().
 			Background(theme.Surface0).

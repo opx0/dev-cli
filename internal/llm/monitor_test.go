@@ -8,7 +8,7 @@ import (
 )
 
 func TestAnalyzeLog_Parsing(t *testing.T) {
-	// 1. Mock Server to simulate LLM response
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Verify request format (input format check)
 		var req generateRequest
@@ -18,7 +18,6 @@ func TestAnalyzeLog_Parsing(t *testing.T) {
 			return
 		}
 
-		// Send back valid JSON response (output format simulation)
 		resp := generateResponse{
 			Response: `{"explanation": "Root cause is a missing env var", "fix": "export DB_URL=..."}`,
 			Done:     true,
@@ -27,20 +26,17 @@ func TestAnalyzeLog_Parsing(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// 2. Setup Client
 	client := &Client{
 		baseURL:    server.URL,
 		model:      "test-model",
 		httpClient: server.Client(),
 	}
 
-	// 3. Run Analysis
 	result, err := client.AnalyzeLog("Error: Connection failed")
 	if err != nil {
 		t.Fatalf("AnalyzeLog failed: %v", err)
 	}
 
-	// 4. Verify Result
 	if result.Explanation != "Root cause is a missing env var" {
 		t.Errorf("Expected explanation 'Root cause is a missing env var', got '%s'", result.Explanation)
 	}
@@ -50,10 +46,10 @@ func TestAnalyzeLog_Parsing(t *testing.T) {
 }
 
 func TestAnalyzeLog_MalformedJSON(t *testing.T) {
-	// Test how it handles "broken" output from LLM
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := generateResponse{
-			Response: `This is not JSON`, // raw text response case
+			Response: `This is not JSON`,
 			Done:     true,
 		}
 		json.NewEncoder(w).Encode(resp)

@@ -28,6 +28,7 @@ type HistoryItem struct {
 	Directory  string
 	SessionID  string
 	Details    string // Raw JSON
+	Resolution string // "solution", "unrelated", "skipped", or "" (empty)
 }
 
 func SaveCommand(db *sql.DB, entry LogEntry) error {
@@ -53,7 +54,7 @@ func SaveCommand(db *sql.DB, entry LogEntry) error {
 }
 
 func GetRecentHistory(db *sql.DB, limit int) ([]HistoryItem, error) {
-	query := `SELECT id, timestamp, command, exit_code, duration_ms, directory, session_id, details 
+	query := `SELECT id, timestamp, command, exit_code, duration_ms, directory, session_id, details, COALESCE(resolution, '') 
 			  FROM history ORDER BY id DESC LIMIT ?`
 
 	rows, err := db.Query(query, limit)
@@ -66,7 +67,7 @@ func GetRecentHistory(db *sql.DB, limit int) ([]HistoryItem, error) {
 	for rows.Next() {
 		var item HistoryItem
 		var ts int64
-		if err := rows.Scan(&item.ID, &ts, &item.Command, &item.ExitCode, &item.DurationMs, &item.Directory, &item.SessionID, &item.Details); err != nil {
+		if err := rows.Scan(&item.ID, &ts, &item.Command, &item.ExitCode, &item.DurationMs, &item.Directory, &item.SessionID, &item.Details, &item.Resolution); err != nil {
 			return nil, err
 		}
 		item.Timestamp = time.Unix(ts, 0)
@@ -76,7 +77,7 @@ func GetRecentHistory(db *sql.DB, limit int) ([]HistoryItem, error) {
 }
 
 func SearchHistory(db *sql.DB, query string) ([]HistoryItem, error) {
-	sqlQuery := `SELECT id, timestamp, command, exit_code, duration_ms, directory, session_id, details 
+	sqlQuery := `SELECT id, timestamp, command, exit_code, duration_ms, directory, session_id, details, COALESCE(resolution, '') 
 				 FROM history 
 				 WHERE command LIKE ? OR details LIKE ?
 				 ORDER BY id DESC
@@ -93,7 +94,7 @@ func SearchHistory(db *sql.DB, query string) ([]HistoryItem, error) {
 	for rows.Next() {
 		var item HistoryItem
 		var ts int64
-		if err := rows.Scan(&item.ID, &ts, &item.Command, &item.ExitCode, &item.DurationMs, &item.Directory, &item.SessionID, &item.Details); err != nil {
+		if err := rows.Scan(&item.ID, &ts, &item.Command, &item.ExitCode, &item.DurationMs, &item.Directory, &item.SessionID, &item.Details, &item.Resolution); err != nil {
 			return nil, err
 		}
 		item.Timestamp = time.Unix(ts, 0)
@@ -109,7 +110,7 @@ type QueryOpts struct {
 }
 
 func GetFailures(db *sql.DB, opts QueryOpts) ([]HistoryItem, error) {
-	queryBuilder := `SELECT h.id, h.timestamp, h.command, h.exit_code, h.duration_ms, h.directory, h.session_id, h.details 
+	queryBuilder := `SELECT h.id, h.timestamp, h.command, h.exit_code, h.duration_ms, h.directory, h.session_id, h.details, COALESCE(h.resolution, '') 
 					 FROM history h`
 	var args []interface{}
 	var whereClauses []string
@@ -148,11 +149,69 @@ func GetFailures(db *sql.DB, opts QueryOpts) ([]HistoryItem, error) {
 	for rows.Next() {
 		var item HistoryItem
 		var ts int64
-		if err := rows.Scan(&item.ID, &ts, &item.Command, &item.ExitCode, &item.DurationMs, &item.Directory, &item.SessionID, &item.Details); err != nil {
+		if err := rows.Scan(&item.ID, &ts, &item.Command, &item.ExitCode, &item.DurationMs, &item.Directory, &item.SessionID, &item.Details, &item.Resolution); err != nil {
 			return nil, err
 		}
 		item.Timestamp = time.Unix(ts, 0)
 		items = append(items, item)
 	}
 	return items, nil
+}
+
+// GetLastUnresolvedFailure returns the most recent failed command that hasn't been resolved.
+func GetLastUnresolvedFailure(db *sql.DB) (*HistoryItem, error) {
+	query := `SELECT id, timestamp, command, exit_code, duration_ms, directory, session_id, details, COALESCE(resolution, '')
+			  FROM history 
+			  WHERE exit_code != 0 AND exit_code != 130 AND (resolution IS NULL OR resolution = '')
+			  ORDER BY id DESC LIMIT 1`
+
+	row := db.QueryRow(query)
+	var item HistoryItem
+	var ts int64
+	err := row.Scan(&item.ID, &ts, &item.Command, &item.ExitCode, &item.DurationMs, &item.Directory, &item.SessionID, &item.Details, &item.Resolution)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	item.Timestamp = time.Unix(ts, 0)
+	return &item, nil
+}
+
+// GetHistoryByID retrieves a specific history item by ID.
+func GetHistoryByID(db *sql.DB, id int64) (*HistoryItem, error) {
+	query := `SELECT id, timestamp, command, exit_code, duration_ms, directory, session_id, details, COALESCE(resolution, '')
+			  FROM history WHERE id = ?`
+
+	row := db.QueryRow(query, id)
+	var item HistoryItem
+	var ts int64
+	err := row.Scan(&item.ID, &ts, &item.Command, &item.ExitCode, &item.DurationMs, &item.Directory, &item.SessionID, &item.Details, &item.Resolution)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	item.Timestamp = time.Unix(ts, 0)
+	return &item, nil
+}
+
+// MarkResolution updates the resolution status of a history entry.
+// Valid values: "solution", "unrelated", "skipped"
+func MarkResolution(db *sql.DB, id int64, resolution string) error {
+	query := `UPDATE history SET resolution = ? WHERE id = ?`
+	result, err := db.Exec(query, resolution, id)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("history entry not found: %d", id)
+	}
+	return nil
 }

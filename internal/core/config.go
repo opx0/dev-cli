@@ -1,11 +1,63 @@
-package textutil
+package core
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/reflow/wordwrap"
 )
+
+type Config struct {
+	OllamaURL       string
+	OllamaModel     string
+	PerplexityKey   string
+	PerplexityModel string
+	ForceLocalLLM   bool
+	LogDir          string
+}
+
+func LoadConfig() *Config {
+	cfg := &Config{
+		OllamaURL:       "http://localhost:11434",
+		OllamaModel:     "qwen2.5-coder:3b-instruct",
+		PerplexityModel: "sonar-pro",
+		ForceLocalLLM:   false,
+	}
+
+	if val := os.Getenv("DEV_CLI_OLLAMA_URL"); val != "" {
+		cfg.OllamaURL = val
+	}
+	if val := os.Getenv("DEV_CLI_OLLAMA_MODEL"); val != "" {
+		cfg.OllamaModel = val
+	}
+	if val := os.Getenv("DEV_CLI_PERPLEXITY_KEY"); val != "" {
+		cfg.PerplexityKey = val
+	} else if val := os.Getenv("PERPLEXITY_API_KEY"); val != "" {
+		cfg.PerplexityKey = val
+	}
+	if val := os.Getenv("DEV_CLI_PERPLEXITY_MODEL"); val != "" {
+		cfg.PerplexityModel = val
+	}
+	if os.Getenv("DEV_CLI_FORCE_LOCAL") != "" {
+		cfg.ForceLocalLLM = true
+	}
+	if val := os.Getenv("DEV_CLI_LOG_DIR"); val != "" {
+		cfg.LogDir = val
+	} else {
+		home, _ := os.UserHomeDir()
+		cfg.LogDir = filepath.Join(home, ".devlogs")
+	}
+
+	return cfg
+}
+
+func (c *Config) IsWebSearchEnabled() bool {
+	return !c.ForceLocalLLM && c.PerplexityKey != ""
+}
+
+var CurrentConfig = LoadConfig()
 
 func CutLine(line string, start, end int) string {
 	if start >= end {
@@ -75,4 +127,11 @@ func MaxLineWidth(lines []string) int {
 		}
 	}
 	return maxWidth
+}
+
+func TruncateOutput(output string, maxLen int) string {
+	if len(output) <= maxLen {
+		return output
+	}
+	return output[:maxLen-20] + "\n...[truncated]..."
 }

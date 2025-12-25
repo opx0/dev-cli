@@ -94,9 +94,6 @@ type DockerClient struct {
 	cli *client.Client
 }
 
-// Note: Shared client management has moved to Registry.
-// Use GetRegistry().Docker() instead of the deprecated GetSharedDockerClient().
-
 func NewDockerClient() (*DockerClient, error) {
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
@@ -214,8 +211,6 @@ func (d *DockerClient) Close() error {
 	return nil
 }
 
-// Container Control Methods
-
 func (d *DockerClient) StartContainer(ctx context.Context, containerID string) error {
 	return d.cli.ContainerStart(ctx, containerID, container.StartOptions{})
 }
@@ -248,8 +243,6 @@ func (d *DockerClient) PauseContainer(ctx context.Context, containerID string) e
 func (d *DockerClient) UnpauseContainer(ctx context.Context, containerID string) error {
 	return d.cli.ContainerUnpause(ctx, containerID)
 }
-
-// Stats Streaming
 
 func (d *DockerClient) GetContainerStats(ctx context.Context, containerID string) (*ContainerStatsSnapshot, error) {
 	stats, err := d.cli.ContainerStats(ctx, containerID, false)
@@ -302,14 +295,12 @@ func (d *DockerClient) GetContainerStats(ctx context.Context, containerID string
 		PIDs:      v.PidsStats.Current,
 	}
 
-	// Calculate CPU percentage
 	cpuDelta := float64(v.CPUStats.CPUUsage.TotalUsage - v.PreCPUStats.CPUUsage.TotalUsage)
 	systemDelta := float64(v.CPUStats.SystemUsage - v.PreCPUStats.SystemUsage)
 	if systemDelta > 0 && cpuDelta > 0 {
 		snapshot.CPUPercent = (cpuDelta / systemDelta) * float64(v.CPUStats.OnlineCPUs) * 100.0
 	}
 
-	// Memory
 	cacheVal := uint64(0)
 	if v.MemoryStats.Stats != nil {
 		cacheVal = v.MemoryStats.Stats["cache"]
@@ -320,13 +311,11 @@ func (d *DockerClient) GetContainerStats(ctx context.Context, containerID string
 		snapshot.MemPercent = float64(snapshot.MemUsed) / float64(snapshot.MemLimit) * 100.0
 	}
 
-	// Network I/O
 	for _, netStats := range v.Networks {
 		snapshot.NetRx += netStats.RxBytes
 		snapshot.NetTx += netStats.TxBytes
 	}
 
-	// Block I/O
 	for _, bioEntry := range v.BlkioStats.IoServiceBytesRecursive {
 		switch bioEntry.Op {
 		case "Read", "read":
@@ -338,8 +327,6 @@ func (d *DockerClient) GetContainerStats(ctx context.Context, containerID string
 
 	return snapshot, nil
 }
-
-// Container Inspection
 
 func (d *DockerClient) InspectContainer(ctx context.Context, containerID string) (*ContainerDetail, error) {
 	info, err := d.cli.ContainerInspect(ctx, containerID)
@@ -367,13 +354,11 @@ func (d *DockerClient) InspectContainer(ctx context.Context, containerID string)
 		Cmd:     info.Config.Cmd,
 	}
 
-	// Calculate uptime
 	if info.State.Running {
 		startTime, _ := time.Parse(time.RFC3339Nano, info.State.StartedAt)
 		detail.Uptime = time.Since(startTime).Round(time.Second).String()
 	}
 
-	// Mounts
 	for _, m := range info.Mounts {
 		detail.Mounts = append(detail.Mounts, Mount{
 			Source:      m.Source,
@@ -383,13 +368,11 @@ func (d *DockerClient) InspectContainer(ctx context.Context, containerID string)
 		})
 	}
 
-	// Network
 	for netName := range info.NetworkSettings.Networks {
 		detail.NetworkID = netName
 		break
 	}
 
-	// Ports
 	for portProto, bindings := range info.NetworkSettings.Ports {
 		for _, b := range bindings {
 			var publicPort uint16
@@ -408,8 +391,6 @@ func (d *DockerClient) InspectContainer(ctx context.Context, containerID string)
 	return detail, nil
 }
 
-// Images
-
 func (d *DockerClient) ListImages(ctx context.Context) ([]ImageInfo, error) {
 	images, err := d.cli.ImageList(ctx, image.ListOptions{})
 	if err != nil {
@@ -420,7 +401,7 @@ func (d *DockerClient) ListImages(ctx context.Context) ([]ImageInfo, error) {
 	for _, img := range images {
 		id := img.ID
 		if len(id) > 19 {
-			id = id[7:19] // Remove "sha256:" prefix and truncate
+			id = id[7:19]
 		}
 		result = append(result, ImageInfo{
 			ID:      id,
@@ -439,8 +420,6 @@ func (d *DockerClient) RemoveImage(ctx context.Context, imageID string, force bo
 	})
 	return err
 }
-
-// Volumes
 
 func (d *DockerClient) ListVolumes(ctx context.Context) ([]VolumeInfo, error) {
 	volumes, err := d.cli.VolumeList(ctx, volume.ListOptions{})
@@ -465,15 +444,12 @@ func (d *DockerClient) RemoveVolume(ctx context.Context, volumeName string, forc
 	return d.cli.VolumeRemove(ctx, volumeName, force)
 }
 
-// Container Processes (docker top)
-
 func (d *DockerClient) TopContainer(ctx context.Context, containerID string) ([]ProcessInfo, error) {
 	top, err := d.cli.ContainerTop(ctx, containerID, []string{})
 	if err != nil {
 		return nil, fmt.Errorf("top failed: %w", err)
 	}
 
-	// Find column indices
 	pidIdx, userIdx, cmdIdx := -1, -1, -1
 	for i, title := range top.Titles {
 		switch title {
@@ -503,8 +479,6 @@ func (d *DockerClient) TopContainer(ctx context.Context, containerID string) ([]
 	return result, nil
 }
 
-// Bulk operations
-
 func (d *DockerClient) PruneContainers(ctx context.Context) (uint64, error) {
 	report, err := d.cli.ContainersPrune(ctx, filters.Args{})
 	if err != nil {
@@ -528,10 +502,6 @@ func (d *DockerClient) PruneVolumes(ctx context.Context) (uint64, error) {
 	}
 	return report.SpaceReclaimed, nil
 }
-
-// =============================================================================
-// Log Streaming
-// =============================================================================
 
 // StreamLogs streams container logs to a LogSink.
 // Returns when context is cancelled or an error occurs.
@@ -567,7 +537,6 @@ func (d *DockerClient) StreamLogsToWriter(ctx context.Context, containerID strin
 	}
 	defer reader.Close()
 
-	// Docker multiplexes stdout/stderr with 8-byte header
 	buf := make([]byte, 8192)
 	for {
 		select {
@@ -578,10 +547,10 @@ func (d *DockerClient) StreamLogsToWriter(ctx context.Context, containerID strin
 
 		n, err := reader.Read(buf)
 		if n > 0 {
-			// Skip 8-byte header and write content
+
 			data := buf[:n]
 			for len(data) > 8 {
-				// Header: [stream_type][0][0][0][size1][size2][size3][size4]
+
 				size := int(data[4])<<24 | int(data[5])<<16 | int(data[6])<<8 | int(data[7])
 				if size <= 0 || size > len(data)-8 {
 					break
@@ -638,8 +607,8 @@ func (d *DockerClient) processLogStream(ctx context.Context, reader io.ReadClose
 		if n > 0 {
 			data := buf[:n]
 			for len(data) > 8 {
-				// Parse Docker log header
-				streamType := data[0] // 1 = stdout, 2 = stderr
+
+				streamType := data[0]
 				size := int(data[4])<<24 | int(data[5])<<16 | int(data[6])<<8 | int(data[7])
 				if size <= 0 || size > len(data)-8 {
 					break
@@ -651,7 +620,6 @@ func (d *DockerClient) processLogStream(ctx context.Context, reader io.ReadClose
 					stream = "stderr"
 				}
 
-				// Parse timestamp from content (RFC3339 format at start)
 				timestamp := time.Now()
 				if len(content) > 30 && content[4] == '-' {
 					if t, perr := time.Parse(time.RFC3339Nano, strings.TrimSpace(content[:30])); perr == nil {
@@ -667,13 +635,12 @@ func (d *DockerClient) processLogStream(ctx context.Context, reader io.ReadClose
 					Message:   strings.TrimSuffix(content, "\n"),
 				}
 
-				// Add snapshots at interval
 				if snapshotInterval != nil && time.Since(lastSnapshot) >= *snapshotInterval {
 					if gpu != nil {
 						gpuStats := gpu.GetStats()
 						entry.GPUSnapshot = &gpuStats
 					}
-					// Could add container stats here too
+
 					lastSnapshot = time.Now()
 				}
 

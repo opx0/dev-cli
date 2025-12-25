@@ -1,76 +1,70 @@
-# golangci-lint configuration for dev-cli
-# Focused on Docker API safety and common Go bugs
-# Run: golangci-lint run ./...
-
 run:
   timeout: 5m
-  modules-download-mode: readonly
+  tests: true
+  relative-path-mode: cfg
+  issues-exit-code: 1
+
+output:
+  formats:
+    - format: colored-line-number # Best for CLI usage
+  print-issued-lines: true
+  print-linter-name: true
 
 linters:
+  disable-all: true
   enable:
-    # Critical for Docker SDK - catch unhandled errors
-    - errcheck
-    # Static analysis for common bugs
-    - staticcheck
-    # Lightweight linter, catches common mistakes
-    - revive
-    # Detect ineffectual assignments
-    - ineffassign
-    # Check for unchecked type assertions
-    - unconvert
-    # Detect unused code
-    - unused
-    # Check for goroutine leaks (important for streaming logs)
-    - govet
-    # Check printf-style functions
-    - goprintffuncname
+    - errcheck      # Checks for unchecked errors
+    - govet         # Official Go tool
+    - ineffassign   # Detects unused assignments
+    - typecheck     # Parses and type-checks Go code
+    - unused        # Checks for unused constants, variables, functions
 
-  disable:
-    # Too noisy for dev tools
-    - gocritic
-    - gocyclo
-    - funlen
-    - gocognit
+    - staticcheck   # Massive set of best practice & style rules
+
+    - revive        # Faster, configurable replacement for deprecated 'golint'
+    - gosec         # Security scanner (SQL injection, hardcoded creds)
+    - godoclint     # (New 2025) Validates comments against Go standards [web:101]
+
+    - bodyclose     # Checks if HTTP response bodies are closed
+    - noctx         # Ensures you send context.Context to functions that need it
+    - dogsled       # Checks for too many blank identifiers (e.g. _, _, _, err)
+    - unconvert     # Remove unnecessary type conversions
+    - goconst       # Finds repeated strings that could be constants
+    - exportloopref # Checks for pointers to enclosing loop variables
 
 linters-settings:
-  errcheck:
-    # Check for ignored errors in defer statements
-    check-blank: true
-    # Don't report on explicitly ignored errors with _
-    exclude-functions:
-      - io.Copy
-      - (io.Closer).Close
-
   revive:
     rules:
-      - name: blank-imports
-      - name: context-as-argument
-      - name: context-keys-type
-      - name: error-return
-      - name: error-strings
       - name: exported
-      - name: increment-decrement
-      - name: var-declaration
+        severity: warning
+        disabled: false
+        arguments: ["disableStuttering"] # Check for types like "UserUser"
       - name: package-comments
-        disabled: true # Not needed for internal packages
+        severity: warning
+        disabled: false
 
-  staticcheck:
-    checks:
-      - all
-      - -SA1019 # Ignore deprecation warnings for now
+  # gosec:
+  #   excludes:
+  #     - G101 # "Potential hardcoded credential" (often false positives in tests)
+  #   config:
+  #     G306: "0600" # Allow only strict file permissions
+  #
+  # staticcheck:
+  #   checks: ["all", "-ST1000"] # Enable all, but disable package comment check
+
+  # Goconst
+  goconst:
+    min-len: 3
+    min-occurrences: 3
 
 issues:
-  # Maximum issues count per one linter
-  max-issues-per-linter: 50
-  max-same-issues: 10
-
+  max-issues-per-linter: 0
+  max-same-issues: 0
   exclude-rules:
-    # Exclude some linters from running on test files
     - path: _test\.go
       linters:
+        - gosec
         - errcheck
-
-    # Exclude lll issues for long lines in go.mod
-    - path: go\.mod
+    - path: tools/
       linters:
-        - lll
+        - gochecknoglobals

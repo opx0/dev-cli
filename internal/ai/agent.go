@@ -1,4 +1,4 @@
-package agent
+package ai
 
 import (
 	"bytes"
@@ -10,19 +10,34 @@ import (
 	"time"
 
 	"github.com/briandowns/spinner"
-
-	"dev-cli/internal/llm"
 )
 
 const maxRetries = 3
 
-type Agent struct {
-	client *llm.HybridClient
+type Solver interface {
+	Solve(goal string) (string, error)
 }
 
-func New() *Agent {
+type Executor interface {
+	Execute(command string) (success bool, errOutput string)
+}
+
+type Agent struct {
+	solver   Solver
+	executor Executor
+}
+
+func NewAgent() *Agent {
 	return &Agent{
-		client: llm.NewHybridClient(),
+		solver:   NewHybridClient(),
+		executor: &shellExecutor{},
+	}
+}
+
+func NewAgentWithDeps(solver Solver, executor Executor) *Agent {
+	return &Agent{
+		solver:   solver,
+		executor: executor,
 	}
 }
 
@@ -44,7 +59,7 @@ func (a *Agent) Resolve(issue string, approval func(string) bool) error {
 			prompt = fmt.Sprintf("Previous command failed with:\n%s\n\nOriginal task: %s\n\nPlease provide a corrected command.", lastError, issue)
 		}
 
-		proposal, err := a.client.Solve(prompt)
+		proposal, err := a.solver.Solve(prompt)
 		s.Stop()
 
 		if err != nil {
@@ -62,14 +77,14 @@ func (a *Agent) Resolve(issue string, approval func(string) bool) error {
 		}
 
 		fmt.Printf("\n  > Running: %s\n", proposal)
-		success, errOutput := a.executeWithCapture(proposal)
+		success, errOutput := a.executor.Execute(proposal)
 
 		if success {
 			fmt.Println("  + Done")
 			return nil
 		}
 
-		lastError = truncate(errOutput, 500)
+		lastError = truncateAgent(errOutput, 500)
 		fmt.Printf("  x Failed. Retrying...\n")
 	}
 
@@ -77,7 +92,9 @@ func (a *Agent) Resolve(issue string, approval func(string) bool) error {
 	return fmt.Errorf("max retries exceeded")
 }
 
-func (a *Agent) executeWithCapture(command string) (bool, string) {
+type shellExecutor struct{}
+
+func (e *shellExecutor) Execute(command string) (bool, string) {
 	cmd := exec.Command("sh", "-c", command)
 
 	var stderrBuf bytes.Buffer
@@ -89,7 +106,7 @@ func (a *Agent) executeWithCapture(command string) (bool, string) {
 	return err == nil, stderrBuf.String()
 }
 
-func truncate(s string, maxLen int) string {
+func truncateAgent(s string, maxLen int) string {
 	s = strings.TrimSpace(s)
 	if len(s) <= maxLen {
 		return s
