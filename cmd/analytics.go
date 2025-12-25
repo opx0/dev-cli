@@ -15,22 +15,17 @@ var (
 	analyticsJSON    bool
 	analyticsLimit   int
 	analyticsCommand string
+	analyticsCluster bool
 )
 
 var analyticsCmd = &cobra.Command{
-	Use:   "analytics",
-	Short: "View proactive debugging insights from command history",
-	Long: `Analyze your command history to identify failure patterns and get proactive suggestions.
-Shows failure rates, common fixes, and debugging hints based on historical data.`,
-	Example: `  # View recent failure patterns
-  dev-cli analytics
-
-  # Get stats for a specific command
-  dev-cli analytics --command npm
-
-  # Output as JSON
-  dev-cli analytics --json`,
+	Use:     "analytics",
+	Short:   "View proactive debugging insights from command history",
 	Aliases: []string{"stats", "insights"},
+	Example: `  dev-cli analytics
+  dev-cli analytics --command npm
+  dev-cli analytics --cluster
+  dev-cli analytics --json`,
 	Run: func(cmd *cobra.Command, args []string) {
 		db, err := storage.InitDB()
 		if err != nil {
@@ -41,7 +36,9 @@ Shows failure rates, common fixes, and debugging hints based on historical data.
 
 		analyzer := analytics.NewAnalyzer(db)
 
-		if analyticsCommand != "" {
+		if analyticsCluster {
+			showErrorClusters(analyzer)
+		} else if analyticsCommand != "" {
 			showCommandStats(analyzer, analyticsCommand)
 		} else {
 			showFailurePatterns(analyzer)
@@ -51,14 +48,14 @@ Shows failure rates, common fixes, and debugging hints based on historical data.
 
 func init() {
 	rootCmd.AddCommand(analyticsCmd)
-
 	analyticsCmd.Flags().BoolVar(&analyticsJSON, "json", false, "Output as JSON")
 	analyticsCmd.Flags().IntVarP(&analyticsLimit, "limit", "l", 10, "Number of patterns to show")
 	analyticsCmd.Flags().StringVarP(&analyticsCommand, "command", "c", "", "Analyze a specific command pattern")
+	analyticsCmd.Flags().BoolVar(&analyticsCluster, "cluster", false, "Show error clusters using simhash")
 }
 
 func showCommandStats(analyzer *analytics.Analyzer, command string) {
-	stats, err := analyzer.GetCommandStats(command)
+	stats, err := analyzer.GetStats(command)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "⚠️  Failed to get stats: %v\n", err)
 		return
@@ -70,40 +67,39 @@ func showCommandStats(analyzer *analytics.Analyzer, command string) {
 		return
 	}
 
-	fmt.Printf("\n📊 Statistics for '%s'\n", stats.CommandPattern)
-	fmt.Printf("   Total runs:    %d\n", stats.TotalRuns)
-	fmt.Printf("   Failures:      %d\n", stats.FailureCount)
-	fmt.Printf("   Failure rate:  %.1f%%\n", stats.FailureRate*100)
+	fmt.Printf("\n📊 Statistics for '%s'\n", stats.Pattern)
+	fmt.Printf("   Total runs:    %d\n", stats.RunCount)
+	fmt.Printf("   Failures:      %d\n", stats.FailCount)
+	fmt.Printf("   Failure rate:  %.1f%%\n", stats.FailRate*100)
 	fmt.Printf("   Avg duration:  %dms\n", stats.AvgDurationMs)
 
-	if len(stats.CommonFixes) > 0 {
+	if len(stats.KnownFixes) > 0 {
 		fmt.Println("\n💡 Known Fixes:")
-		for i, fix := range stats.CommonFixes {
+		for i, fix := range stats.KnownFixes {
 			fmt.Printf("   %d. %s\n", i+1, fix)
 		}
 	}
 
-	// Show proactive suggestions
-	suggestions := analyzer.GetProactiveSuggestions(command)
+	suggestions := analyzer.GetSuggestions(command)
 	if len(suggestions) > 0 {
 		fmt.Println("\n🔍 Suggestions:")
 		for _, sug := range suggestions {
 			icon := "💡"
-			if sug.Severity == "high" {
+			if sug.Priority == "high" {
 				icon = "⚠️"
-			} else if sug.Severity == "low" {
+			} else if sug.Priority == "low" {
 				icon = "ℹ️"
 			}
-			fmt.Printf("   %s %s\n", icon, sug.Message)
-			if sug.SuggestedFix != "" {
-				fmt.Printf("      → %s\n", sug.SuggestedFix)
+			fmt.Printf("   %s %s\n", icon, sug.Description)
+			if sug.Fix != "" {
+				fmt.Printf("      → %s\n", sug.Fix)
 			}
 		}
 	}
 }
 
 func showFailurePatterns(analyzer *analytics.Analyzer) {
-	patterns, err := analyzer.GetRecentFailurePatterns(analyticsLimit)
+	patterns, err := analyzer.GetFailurePatterns(analyticsLimit)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "⚠️  Failed to get patterns: %v\n", err)
 		return
@@ -122,16 +118,47 @@ func showFailurePatterns(analyzer *analytics.Analyzer) {
 
 	fmt.Printf("\n📊 Recent Failure Patterns (%d found)\n\n", len(patterns))
 	for i, p := range patterns {
-		rateColor := "\033[32m" // green
-		if p.FailureRate > 0.5 {
-			rateColor = "\033[31m" // red
-		} else if p.FailureRate > 0.25 {
-			rateColor = "\033[33m" // yellow
+		rateColor := "\033[32m"
+		if p.FailRate > 0.5 {
+			rateColor = "\033[31m"
+		} else if p.FailRate > 0.25 {
+			rateColor = "\033[33m"
 		}
-		fmt.Printf("  %d. %s\n", i+1, p.CommandPattern)
+		fmt.Printf("  %d. %s\n", i+1, p.Pattern)
 		fmt.Printf("     Failures: %d | Rate: %s%.0f%%\033[0m\n",
-			p.FailureCount, rateColor, p.FailureRate*100)
+			p.FailCount, rateColor, p.FailRate*100)
 	}
 
-	fmt.Println("\n💡 Use --command <name> for detailed stats on a specific command")
+	fmt.Println("\n💡 Use --command <name> or --cluster for more details")
+}
+
+func showErrorClusters(analyzer *analytics.Analyzer) {
+	clusters, err := analyzer.ClusterErrors(analyticsLimit)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "⚠️  Failed to cluster errors: %v\n", err)
+		return
+	}
+
+	if len(clusters) == 0 {
+		fmt.Println("✨ No error clusters found")
+		return
+	}
+
+	if analyticsJSON {
+		data, _ := json.MarshalIndent(clusters, "", "  ")
+		fmt.Println(string(data))
+		return
+	}
+
+	fmt.Printf("\n🔗 Error Clusters (%d found)\n\n", len(clusters))
+	for i, c := range clusters {
+		fmt.Printf("  %d. %s (x%d)\n", i+1, c.Pattern, c.Count)
+		fmt.Printf("     Fingerprint: %x\n", c.Fingerprint)
+		if len(c.Samples) > 0 {
+			fmt.Printf("     Sample: %s\n", c.Samples[0])
+		}
+		if len(c.Solutions) > 0 {
+			fmt.Printf("     💡 Fix: %s\n", c.Solutions[0])
+		}
+	}
 }

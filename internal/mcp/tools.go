@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"dev-cli/internal/analytics"
 	"dev-cli/internal/storage"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -621,4 +622,51 @@ func getRecentFailurePatternsFromDB(db *sql.DB, limit int) ([]commandStats, erro
 	}
 
 	return patterns, nil
+}
+
+func registerClusterErrorsTool(s *server.MCPServer) {
+	tool := mcp.NewTool("cluster_errors",
+		mcp.WithDescription("Group similar errors using simhash fingerprinting. Finds recurring error patterns."),
+		mcp.WithNumber("limit", mcp.Description("Max clusters to return (default: 10)")),
+		mcp.WithString("match", mcp.Description("Find clusters similar to this error text")),
+	)
+	s.AddTool(tool, clusterErrorsHandler)
+}
+
+func clusterErrorsHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := req.GetArguments()
+
+	limit := 10
+	if l, ok := args["limit"].(float64); ok && l > 0 {
+		limit = int(l)
+	}
+	matchText, _ := args["match"].(string)
+
+	db, err := storage.InitDB()
+	if err != nil {
+		return mcp.NewToolResultError("db init failed: " + err.Error()), nil
+	}
+	defer db.Close()
+
+	analyzer := analytics.NewAnalyzer(db)
+	result := make(map[string]interface{})
+
+	if matchText != "" {
+		matches, err := analyzer.FindSimilarErrors(matchText)
+		if err != nil {
+			return mcp.NewToolResultError("find similar failed: " + err.Error()), nil
+		}
+		result["matches"] = matches
+		result["count"] = len(matches)
+	} else {
+		clusters, err := analyzer.ClusterErrors(limit)
+		if err != nil {
+			return mcp.NewToolResultError("cluster failed: " + err.Error()), nil
+		}
+		result["clusters"] = clusters
+		result["count"] = len(clusters)
+	}
+
+	jsonBytes, _ := json.Marshal(result)
+	return mcp.NewToolResultText(string(jsonBytes)), nil
 }

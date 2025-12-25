@@ -10,6 +10,12 @@
 - **🧠 Intelligent Research** (`ask`): Asks LLMs (Ollama/Perplexity) how to do things.
 - **👀 Active Monitoring** (`watch`): Streams logs and alerts you on errors.
 - **🔍 Root Cause Analysis** (`explain`): Deep dives into previous failures.
+- **🖥️ Interactive TUI** (`ui`): Full-featured dashboard with agent, containers, and history tabs.
+- **📊 Analytics** (`analytics`): Proactive debugging insights from command history.
+- **🔄 Workflows** (`workflow`): Multi-step automation with rollback and checkpointing.
+- **🏥 Doctor** (`doctor`): System health checks with auto-fix capabilities.
+- **📤 Export** (`export`): Export logs formatted for OpenCode ingestion.
+- **🔌 MCP Server** (`mcp-serve`): Model Context Protocol server for OpenCode integration.
 - **⚙️ Configurable**: Works with local (Ollama) or cloud (Perplexity) models.
 
 ## Installation
@@ -76,7 +82,111 @@ Monitor logs in real-time for errors.
 ### `ui`
 
 **Usage**: `dev-cli ui`
-Launch the interactive TUI (Mission Control) to view dashboard, monitor, and chat.
+Launch the interactive TUI (Mission Control).
+
+**Tabs:**
+
+- **Agent**: Chat interface with AI, execute commands.
+- **Containers**: Docker container monitoring with live logs.
+- **History**: Command history browser with details.
+
+**Keybindings:**
+
+| Key      | Action                     |
+| -------- | -------------------------- |
+| `1/2/3`  | Switch tabs                |
+| `Tab`    | Cycle focus                |
+| `i`      | Insert mode                |
+| `Esc`    | Normal mode                |
+| `Ctrl+o` | **Switch to OpenCode TUI** |
+| `q`      | Quit                       |
+
+### `doctor`
+
+**Usage**: `dev-cli doctor [flags]`
+Run health checks on all dev-cli dependencies and optionally fix issues.
+
+**Checks:**
+
+- Docker daemon status
+- Docker Compose availability
+- Ollama availability & model
+- GPU/CUDA support
+- Required directories (`~/.devlogs`)
+- Network connectivity
+
+**Flags:**
+
+- `--fix`: Auto-fix issues where possible.
+- `--quiet`: Suppress non-essential output.
+- `--json`: Output results as JSON (for agent consumption).
+
+### `workflow`
+
+**Usage**: `dev-cli workflow <subcommand>`
+Execute multi-step workflows defined in YAML files.
+
+**Subcommands:**
+
+- `run <file.yaml>`: Execute a workflow.
+- `resume <run-id>`: Resume a paused or failed workflow.
+- `list`: List recent workflow runs.
+- `status <run-id>`: Show detailed status of a run.
+- `rollback <run-id>`: Manually trigger rollback.
+
+**Features:**
+
+- Sequential step execution
+- Conditional branching
+- Automatic retry on failure
+- Rollback capabilities
+- Checkpoint/resume for long operations
+
+### `analytics` (alias: `stats`, `insights`)
+
+**Usage**: `dev-cli analytics [flags]`
+Analyze command history to identify failure patterns and get proactive suggestions.
+
+- `-c, --command <string>`: Analyze a specific command pattern.
+- `-l, --limit <int>`: Number of patterns to show (default 10).
+- `--json`: Output as JSON.
+
+### `export`
+
+**Usage**: `dev-cli export [flags]`
+Export container or file logs in a format suitable for OpenCode.
+
+- `--docker <container>`: Docker container to export logs from.
+- `--file <path>`: Log file path to export from.
+- `--lines <int>`: Number of log lines to export (default 50).
+- `--save`: Save to `~/.devlogs/last-error.md` for OpenCode handoff.
+
+### `mcp-serve`
+
+**Usage**: `dev-cli mcp-serve`
+Start a Model Context Protocol (MCP) server for OpenCode integration.
+
+**OpenCode Configuration:**
+Add this to your `opencode.json`:
+
+```json
+{
+  "mcp": {
+    "dev-cli": {
+      "type": "local",
+      "command": ["dev-cli", "mcp-serve"],
+      "enabled": true
+    }
+  }
+}
+```
+
+**Exposed Tools:**
+
+- Query command history
+- Find similar failures
+- Get and store solutions
+- Project fingerprinting
 
 ### `init` (alias: `hook`)
 
@@ -85,26 +195,14 @@ Print the shell integration script.
 
 - `[shell]`: Currently supports `zsh`.
 
-### `log-event` (Internal)
-
-**Usage**: `dev-cli log-event [flags]`
-Used by the shell hook to log command execution.
-
-- `--command <string>`: The command executed.
-- `--exit-code <int>`: The exit code (0 = success).
-- `--cwd <path>`: Working directory.
-- `--duration-ms <int>`: Execution time in milliseconds.
-- `--output <string>`: Captured command output.
-
 ## Database
 
 `dev-cli` uses a local SQLite database to store command history.
 
 - **Location**: `~/.devlogs/history.db` (override with `DEV_CLI_LOG_DIR`).
-- **Schema**: Single `history` table.
-- **Columns**: `id`, `timestamp`, `command`, `exit_code`, `output`, `cwd`, `duration_ms`, `session_id`, `details`.
+- **Schema**: Includes `history` and `workflow_runs` tables.
 
-The database is standard SQLite and can be queried with any SQLite client:
+Query with any SQLite client:
 
 ```bash
 sqlite3 ~/.devlogs/history.db "SELECT command, exit_code FROM history WHERE exit_code != 0"
@@ -121,6 +219,14 @@ The CLI is configured via `~/.devlogs/config.yaml` or Environment Variables.
 | `DEV_CLI_PERPLEXITY_KEY`   | Perplexity API Key | `""`                        |
 | `DEV_CLI_PERPLEXITY_MODEL` | Cloud Model        | `sonar-pro`                 |
 | `DEV_CLI_LOG_DIR`          | Database Path      | `~/.devlogs`                |
+
+## OpenCode Integration
+
+`dev-cli` integrates with [OpenCode](https://github.com/opencode-ai/opencode) in multiple ways:
+
+1. **TUI Handoff**: Press `Ctrl+o` in the dev-cli TUI to switch directly to OpenCode.
+2. **MCP Server**: Use `dev-cli mcp-serve` to expose tools to OpenCode.
+3. **Export**: Use `dev-cli export --save` to save logs for OpenCode ingestion.
 
 ## License
 

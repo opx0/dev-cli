@@ -22,6 +22,7 @@ func NewDevCLIMCPServer() *server.MCPServer {
 	registerStoreSolutionTool(s)
 	registerGetProjectFingerprintTool(s)
 	registerGetSuggestionsTool(s)
+	registerClusterErrorsTool(s)
 
 	return s
 }
