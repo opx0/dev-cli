@@ -2,16 +2,14 @@ package cmd
 
 import (
 	"bufio"
+	"dev-cli/internal/ai"
+	"dev-cli/internal/core"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 	"time"
-
-	"dev-cli/internal/config"
-	"dev-cli/internal/llm"
-	"dev-cli/internal/storage"
 
 	"github.com/briandowns/spinner"
 
@@ -59,7 +57,7 @@ Reads from your command history (requires shell integration via 'dev-cli init zs
 		if explainExitCode == 130 {
 			return
 		}
-		analyzeEntry(storage.LogEntry{
+		analyzeEntry(core.LogEntry{
 			Command:  explainCommand,
 			ExitCode: explainExitCode,
 			Output:   explainOutput,
@@ -81,7 +79,7 @@ func init() {
 }
 
 func analyzeFromLog(limit int, filterStr, sinceStr string, interactive bool) {
-	db, err := storage.InitDB()
+	db, err := core.InitDB()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "⚠️  Failed to open db: %v\n", err)
 		return
@@ -101,7 +99,7 @@ func analyzeFromLog(limit int, filterStr, sinceStr string, interactive bool) {
 		limit = 1
 	}
 
-	items, err := storage.GetFailures(db, storage.QueryOpts{
+	items, err := core.GetFailures(db, core.QueryOpts{
 		Limit:  limit,
 		Filter: filterStr,
 		Since:  sinceDur,
@@ -127,7 +125,7 @@ func analyzeFromLog(limit int, filterStr, sinceStr string, interactive bool) {
 			}
 		}
 
-		analyzeEntry(storage.LogEntry{
+		analyzeEntry(core.LogEntry{
 			Command:  item.Command,
 			ExitCode: item.ExitCode,
 			Output:   output,
@@ -135,10 +133,10 @@ func analyzeFromLog(limit int, filterStr, sinceStr string, interactive bool) {
 	}
 }
 
-func analyzeEntry(entry storage.LogEntry, interactive bool) {
+func analyzeEntry(entry core.LogEntry, interactive bool) {
 	fmt.Printf("\n\033[31m×\033[0m %s \033[90m(exit %d)\033[0m\n", entry.Command, entry.ExitCode)
 
-	if err := llm.EnsureOllamaRunning(); err != nil {
+	if err := ai.EnsureOllamaRunning(); err != nil {
 		fmt.Fprintf(os.Stderr, "\033[33m⚠\033[0m Ollama not available: %v\n", err)
 		return
 	}
@@ -147,7 +145,7 @@ func analyzeEntry(entry storage.LogEntry, interactive bool) {
 	s.Suffix = " 🧠 Analyzing failure..."
 	s.Start()
 
-	client := llm.NewClient(config.Load())
+	client := ai.NewOllamaClient(core.LoadConfig())
 	result, err := client.Explain(entry.Command, entry.ExitCode, entry.Output)
 	s.Stop()
 

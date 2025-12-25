@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"bytes"
+	"dev-cli/internal/ai"
+	"dev-cli/internal/core"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,9 +11,6 @@ import (
 	"os"
 	"strings"
 	"time"
-
-	"dev-cli/internal/config"
-	"dev-cli/internal/llm"
 
 	"github.com/briandowns/spinner"
 	"github.com/spf13/cobra"
@@ -47,7 +46,7 @@ Two modes:
 			os.Setenv("DEV_CLI_FORCE_LOCAL", "1")
 		}
 
-		if err := llm.EnsureOllamaRunning(); err != nil {
+		if err := ai.EnsureOllamaRunning(); err != nil {
 			fmt.Fprintf(os.Stderr, "\033[33m⚠\033[0m Ollama not available: %v\n", err)
 
 		}
@@ -105,7 +104,7 @@ func looksLikeToolName(args []string) bool {
 }
 
 func fetchSolutions(query string) {
-	client := llm.NewHybridClient()
+	client := ai.NewHybridClient()
 
 	backend := "Ollama"
 	if client.HasPerplexity() {
@@ -166,7 +165,7 @@ func fetchSolutions(query string) {
 }
 
 func fetchCommands(toolName, topic string, count int) {
-	cfg := config.Load()
+	cfg := core.LoadConfig()
 	baseURL := cfg.OllamaURL
 	model := cfg.OllamaModel
 

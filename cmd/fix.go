@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"dev-cli/internal/agent"
+	"dev-cli/internal/ai"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -22,7 +22,7 @@ The agent will:
   dev-cli fix "kubectl can't connect to cluster"`,
 	Args: cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		ag := agent.New()
+		ag := ai.NewAgent()
 
 		err := ag.Resolve(args[0], func(proposal string) bool {
 			fmt.Printf("> Proposal: %s\n", proposal)
