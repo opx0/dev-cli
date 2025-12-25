@@ -195,6 +195,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if m.mode == ModeNormal {
 			switch msg.String() {
+			case "tab":
+				m.activeTab = Tab((int(m.activeTab) + 1) % 3)
+			case "shift+tab":
+				m.activeTab = Tab((int(m.activeTab) + 2) % 3)
 			case "1":
 				m.activeTab = TabAgent
 			case "2":
@@ -314,26 +318,26 @@ func (m Model) viewMain() string {
 func (m Model) getFocusLabel() string {
 	switch m.activeTab {
 	case TabAgent:
-		return "agent"
+		return "Agent"
 	case TabContainers:
 		switch m.containers.Focus() {
 		case monitor.FocusServices:
-			return "services"
+			return "Services"
 		case monitor.FocusImages:
-			return "images"
+			return "Images"
 		case monitor.FocusLogs:
-			return "logs"
+			return "Logs"
 		case monitor.FocusStats:
-			return "stats"
+			return "Stats"
 		}
-		return "containers"
+		return "Containers"
 	case TabHistory:
 		if m.history.Focus() == history.FocusSidebar {
-			return "list"
+			return "History"
 		}
-		return "details"
+		return "Details"
 	}
-	return "main"
+	return "Main"
 }
 
 type containerLogsMsg struct {

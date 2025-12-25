@@ -89,7 +89,7 @@ func TestModel_ModeFromTab(t *testing.T) {
 		tab      Tab
 		expected AppMode
 	}{
-		{TabAgent, ModeInsert},
+		{TabAgent, ModeNormal}, // Agent starts in normal mode
 		{TabContainers, ModeNormal},
 		{TabHistory, ModeNormal},
 	}
