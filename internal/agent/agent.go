@@ -16,13 +16,34 @@ import (
 
 const maxRetries = 3
 
-type Agent struct {
-	client *llm.HybridClient
+// Solver is the interface for command suggestion providers
+type Solver interface {
+	Solve(goal string) (string, error)
 }
 
+// Executor is the interface for command execution
+type Executor interface {
+	Execute(command string) (success bool, errOutput string)
+}
+
+type Agent struct {
+	solver   Solver
+	executor Executor
+}
+
+// New creates an agent with the default HybridClient
 func New() *Agent {
 	return &Agent{
-		client: llm.NewHybridClient(),
+		solver:   llm.NewHybridClient(),
+		executor: &shellExecutor{},
+	}
+}
+
+// NewWithDeps creates an agent with custom dependencies (for testing)
+func NewWithDeps(solver Solver, executor Executor) *Agent {
+	return &Agent{
+		solver:   solver,
+		executor: executor,
 	}
 }
 
@@ -44,7 +65,7 @@ func (a *Agent) Resolve(issue string, approval func(string) bool) error {
 			prompt = fmt.Sprintf("Previous command failed with:\n%s\n\nOriginal task: %s\n\nPlease provide a corrected command.", lastError, issue)
 		}
 
-		proposal, err := a.client.Solve(prompt)
+		proposal, err := a.solver.Solve(prompt)
 		s.Stop()
 
 		if err != nil {
@@ -62,7 +83,7 @@ func (a *Agent) Resolve(issue string, approval func(string) bool) error {
 		}
 
 		fmt.Printf("\n  > Running: %s\n", proposal)
-		success, errOutput := a.executeWithCapture(proposal)
+		success, errOutput := a.executor.Execute(proposal)
 
 		if success {
 			fmt.Println("  + Done")
@@ -77,7 +98,10 @@ func (a *Agent) Resolve(issue string, approval func(string) bool) error {
 	return fmt.Errorf("max retries exceeded")
 }
 
-func (a *Agent) executeWithCapture(command string) (bool, string) {
+// shellExecutor is the default command executor
+type shellExecutor struct{}
+
+func (e *shellExecutor) Execute(command string) (bool, string) {
 	cmd := exec.Command("sh", "-c", command)
 
 	var stderrBuf bytes.Buffer

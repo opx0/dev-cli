@@ -14,6 +14,7 @@ type Config struct {
 	OllamaDefaultModel string        `yaml:"ollama_default_model"`
 	DevlogsDir         string        `yaml:"devlogs_dir"`
 	LogFormat          string        `yaml:"log_format"`
+	OpenCodeCmd        string        `yaml:"opencode_cmd"`
 }
 
 func DefaultConfig() Config {
@@ -28,6 +29,7 @@ func DefaultConfig() Config {
 		OllamaDefaultModel: "qwen2.5-coder:3b-instruct",
 		DevlogsDir:         devlogsDir,
 		LogFormat:          "jsonl",
+		OpenCodeCmd:        "opencode",
 	}
 }
 
@@ -63,5 +65,10 @@ func (c Config) WithDevlogsDir(dir string) Config {
 
 func (c Config) WithLogFormat(format string) Config {
 	c.LogFormat = format
+	return c
+}
+
+func (c Config) WithOpenCodeCmd(cmd string) Config {
+	c.OpenCodeCmd = cmd
 	return c
 }

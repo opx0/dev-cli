@@ -61,7 +61,6 @@ func (d serviceDelegate) Render(w io.Writer, m list.Model, index int, listItem l
 		return
 	}
 
-	// Status indicator
 	status := "●"
 	statusColor := theme.Green
 	if i.info.State != "running" {
@@ -168,7 +167,7 @@ type Model struct {
 }
 
 func New() Model {
-	// Services list
+
 	sDelegate := serviceDelegate{}
 	sList := list.New([]list.Item{}, sDelegate, 0, 0)
 	sList.SetShowHelp(false)
@@ -178,7 +177,6 @@ func New() Model {
 	sList.DisableQuitKeybindings()
 	sList.Styles.NoItems = lipgloss.NewStyle().Foreground(theme.Overlay0).Padding(1)
 
-	// Images list
 	iDelegate := imageDelegate{}
 	iList := list.New([]list.Item{}, iDelegate, 0, 0)
 	iList.SetShowHelp(false)
@@ -203,17 +201,15 @@ func (m Model) SetSize(w, h int) Model {
 	m.width = w
 	m.height = h
 
-	// Left sidebar width
 	sidebarWidth := 28
 	if w < 100 {
 		sidebarWidth = 24
 	}
 
-	// Calculate panel heights
 	panelHeight := h - 4
-	servicesHeight := (panelHeight - 8) / 2 // Half for services
-	imagesHeight := (panelHeight - 8) / 2   // Half for images
-	_ = 6                                   // Stats height (used in view.go)
+	servicesHeight := (panelHeight - 8) / 2
+	imagesHeight := (panelHeight - 8) / 2
+	_ = 6
 
 	if servicesHeight < 5 {
 		servicesHeight = 5
@@ -222,13 +218,11 @@ func (m Model) SetSize(w, h int) Model {
 		imagesHeight = 5
 	}
 
-	// Set list dimensions
 	m.servicesList.SetWidth(sidebarWidth - 4)
 	m.servicesList.SetHeight(servicesHeight - 2)
 	m.imagesList.SetWidth(sidebarWidth - 4)
 	m.imagesList.SetHeight(imagesHeight - 2)
 
-	// Viewport for logs
 	logWidth := w - sidebarWidth - 4
 	if logWidth < 40 {
 		logWidth = 40
@@ -269,7 +263,6 @@ func (m Model) SetImages(images []infra.ImageInfo) Model {
 func (m Model) SetLogLines(lines []string) Model {
 	m.logLines = lines
 
-	// If recording, write to file
 	if m.isRecording && m.recordingFile != nil {
 		for _, line := range lines {
 			m.recordingFile.WriteString(line + "\n")
@@ -285,7 +278,6 @@ func (m Model) StartRecording() Model {
 		return m
 	}
 
-	// Create ~/.devlogs directory
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return m
@@ -296,7 +288,6 @@ func (m Model) StartRecording() Model {
 		return m
 	}
 
-	// Get selected service name
 	serviceName := "unknown"
 	if sel := m.servicesList.SelectedItem(); sel != nil {
 		if s, ok := sel.(serviceItem); ok {
@@ -304,7 +295,6 @@ func (m Model) StartRecording() Model {
 		}
 	}
 
-	// Create log file
 	timestamp := time.Now().Format("2006-01-02_15-04-05")
 	filename := fmt.Sprintf("docker-%s-%s.log", serviceName, timestamp)
 	m.recordingPath = filepath.Join(logDir, filename)
@@ -317,7 +307,6 @@ func (m Model) StartRecording() Model {
 	m.recordingFile = file
 	m.isRecording = true
 
-	// Write header
 	m.recordingFile.WriteString(fmt.Sprintf("# Docker Log Recording: %s\n", serviceName))
 	m.recordingFile.WriteString(fmt.Sprintf("# Started: %s\n\n", time.Now().Format(time.RFC3339)))
 

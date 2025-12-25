@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -16,6 +17,7 @@ import (
 var (
 	doctorFix   bool
 	doctorQuiet bool
+	doctorJSON  bool
 )
 
 type CheckResult struct {
@@ -24,6 +26,29 @@ type CheckResult struct {
 	Message string
 	FixCmd  string
 	FixFunc func() error
+}
+
+// DoctorReport is the JSON output format for agent consumption.
+type DoctorReport struct {
+	Timestamp string            `json:"timestamp"`
+	Checks    []CheckResultJSON `json:"checks"`
+	Summary   DoctorSummary     `json:"summary"`
+}
+
+// CheckResultJSON is the JSON-serializable version of CheckResult.
+type CheckResultJSON struct {
+	Name    string `json:"name"`
+	Status  string `json:"status"`
+	Message string `json:"message"`
+	FixCmd  string `json:"fix_cmd,omitempty"`
+}
+
+// DoctorSummary contains aggregate check results.
+type DoctorSummary struct {
+	Passed int `json:"passed"`
+	Warned int `json:"warned"`
+	Failed int `json:"failed"`
+	Total  int `json:"total"`
 }
 
 var doctorCmd = &cobra.Command{
@@ -49,12 +74,10 @@ func init() {
 	rootCmd.AddCommand(doctorCmd)
 	doctorCmd.Flags().BoolVar(&doctorFix, "fix", false, "Attempt to auto-fix issues")
 	doctorCmd.Flags().BoolVar(&doctorQuiet, "quiet", false, "Only show failures")
+	doctorCmd.Flags().BoolVar(&doctorJSON, "json", false, "Output results as JSON for agent consumption")
 }
 
 func runDoctor(cmd *cobra.Command, args []string) {
-	fmt.Println("\033[1m🔍 dev-cli doctor\033[0m")
-	fmt.Println()
-
 	checks := []func() CheckResult{
 		checkDocker,
 		checkDockerCompose,
@@ -66,18 +89,19 @@ func runDoctor(cmd *cobra.Command, args []string) {
 	}
 
 	var failed, warned, passed int
+	var jsonResults []CheckResultJSON
 
 	for _, check := range checks {
 		result := check()
 
-		if doctorQuiet && result.Status == "ok" {
-			passed++
-			continue
+		if doctorJSON {
+			jsonResults = append(jsonResults, CheckResultJSON{
+				Name:    result.Name,
+				Status:  result.Status,
+				Message: result.Message,
+				FixCmd:  result.FixCmd,
+			})
 		}
-
-		icon := getStatusIcon(result.Status)
-		fmt.Printf("%s \033[1m%s\033[0m\n", icon, result.Name)
-		fmt.Printf("   %s\n", result.Message)
 
 		switch result.Status {
 		case "ok":
@@ -86,6 +110,21 @@ func runDoctor(cmd *cobra.Command, args []string) {
 			warned++
 		case "fail":
 			failed++
+		}
+
+		if doctorJSON {
+			continue
+		}
+
+		if doctorQuiet && result.Status == "ok" {
+			continue
+		}
+
+		icon := getStatusIcon(result.Status)
+		fmt.Printf("%s \033[1m%s\033[0m\n", icon, result.Name)
+		fmt.Printf("   %s\n", result.Message)
+
+		if result.Status == "fail" {
 			if doctorFix && (result.FixCmd != "" || result.FixFunc != nil) {
 				fmt.Printf("   \033[33m➜ Attempting fix...\033[0m\n")
 				if err := attemptFix(result); err != nil {
@@ -102,7 +141,27 @@ func runDoctor(cmd *cobra.Command, args []string) {
 		fmt.Println()
 	}
 
-	// Summary
+	if doctorJSON {
+		report := DoctorReport{
+			Timestamp: time.Now().Format(time.RFC3339),
+			Checks:    jsonResults,
+			Summary: DoctorSummary{
+				Passed: passed,
+				Warned: warned,
+				Failed: failed,
+				Total:  len(checks),
+			},
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(report)
+		if failed > 0 {
+			os.Exit(1)
+		}
+		return
+	}
+
+	fmt.Println("\033[1m🔍 dev-cli doctor\033[0m")
 	fmt.Println("\033[90m────────────────────────────────\033[0m")
 	fmt.Printf("✓ %d passed  ", passed)
 	if warned > 0 {
@@ -178,7 +237,6 @@ func checkDocker() CheckResult {
 		}
 	}
 
-	// Get version
 	versionCmd := exec.Command("docker", "--version")
 	versionOutput, _ := versionCmd.Output()
 	version := strings.TrimSpace(string(versionOutput))
@@ -191,7 +249,6 @@ func checkDocker() CheckResult {
 func checkDockerCompose() CheckResult {
 	result := CheckResult{Name: "Docker Compose"}
 
-	// Check docker compose (plugin)
 	if err := exec.Command("docker", "compose", "version").Run(); err == nil {
 		cmd := exec.Command("docker", "compose", "version", "--short")
 		output, _ := cmd.Output()
@@ -200,7 +257,6 @@ func checkDockerCompose() CheckResult {
 		return result
 	}
 
-	// Check docker-compose (standalone)
 	if _, err := exec.LookPath("docker-compose"); err == nil {
 		cmd := exec.Command("docker-compose", "--version")
 		output, _ := cmd.Output()
@@ -209,14 +265,13 @@ func checkDockerCompose() CheckResult {
 		return result
 	}
 
-	// Neither available
 	return CheckResult{
 		Name:    "Docker Compose",
 		Status:  "fail",
 		Message: "Docker Compose not installed",
 		FixCmd:  "sudo pacman -S docker-compose",
 		FixFunc: func() error {
-			// Try to install docker-compose via pacman (Arch)
+
 			cmd := exec.Command("sudo", "pacman", "-S", "--noconfirm", "docker-compose")
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
@@ -240,13 +295,12 @@ func checkOllama() CheckResult {
 		}
 	}
 
-	// Ollama not responding - check if Docker container exists
 	dockerCheck := exec.Command("docker", "ps", "-a", "--filter", "name=ollama", "--format", "{{.Names}}")
 	output, _ := dockerCheck.Output()
 	containerExists := strings.TrimSpace(string(output)) != ""
 
 	if containerExists {
-		// Container exists but not responding - try starting it
+
 		return CheckResult{
 			Name:    "Ollama",
 			Status:  "fail",
@@ -261,7 +315,6 @@ func checkOllama() CheckResult {
 		}
 	}
 
-	// Check if infra/ollama/docker-compose.yml exists
 	projectRoot := getProjectRoot()
 	composeFile := filepath.Join(projectRoot, "infra", "ollama", "docker-compose.yml")
 	if _, err := os.Stat(composeFile); err == nil {
@@ -276,7 +329,6 @@ func checkOllama() CheckResult {
 		}
 	}
 
-	// Fallback: check if native ollama is installed
 	if _, err := exec.LookPath("ollama"); err == nil {
 		return CheckResult{
 			Name:    "Ollama",
@@ -286,14 +338,13 @@ func checkOllama() CheckResult {
 		}
 	}
 
-	// Nothing available - suggest Docker setup
 	return CheckResult{
 		Name:    "Ollama",
 		Status:  "fail",
 		Message: "Ollama not installed",
 		FixCmd:  "cd infra/ollama && docker compose up -d",
 		FixFunc: func() error {
-			// Create infra/ollama if needed and start
+
 			if projectRoot != "" {
 				composeFile := filepath.Join(projectRoot, "infra", "ollama", "docker-compose.yml")
 				if _, err := os.Stat(composeFile); err == nil {
@@ -320,7 +371,6 @@ func checkOllamaModel() CheckResult {
 	}
 	defer resp.Body.Close()
 
-	// Check if any model is available
 	cmd := exec.Command("sh", "-c", "curl -s http://localhost:11434/api/tags | grep -o '\"name\":\"[^\"]*\"' | head -1")
 	output, _ := cmd.Output()
 
@@ -415,7 +465,7 @@ func checkNetwork() CheckResult {
 }
 
 func getProjectRoot() string {
-	// Try to find project root by looking for go.mod
+
 	dir, _ := os.Getwd()
 	for {
 		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
@@ -433,15 +483,15 @@ func getProjectRoot() string {
 // getDockerComposeCmd returns the correct docker compose command
 // Returns ("docker-compose", []string{}) or ("docker", []string{"compose"})
 func getDockerComposeCmd() (string, []string) {
-	// Try docker compose (plugin) first
+
 	if err := exec.Command("docker", "compose", "version").Run(); err == nil {
 		return "docker", []string{"compose"}
 	}
-	// Fall back to docker-compose (standalone)
+
 	if _, err := exec.LookPath("docker-compose"); err == nil {
 		return "docker-compose", []string{}
 	}
-	// Default to docker compose
+
 	return "docker", []string{"compose"}
 }
 

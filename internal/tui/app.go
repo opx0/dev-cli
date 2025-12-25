@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"os"
+	"os/exec"
 
 	"dev-cli/internal/infra"
 	"dev-cli/internal/llm"
@@ -207,6 +208,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "q":
 				m.quitting = true
 				return m, tea.Quit
+			case "ctrl+o":
+				c := infra.DefaultConfig() // TODO: load actual config
+				cmd := systemCmd(c.OpenCodeCmd)
+				return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
+					return nil
+				})
 			}
 		}
 
@@ -404,4 +411,12 @@ type starshipLineMsg struct {
 func checkStarshipLine() tea.Msg {
 	line := infra.GetStarshipStatusLine()
 	return starshipLineMsg{line: line}
+}
+
+func systemCmd(command string) *exec.Cmd {
+	cmd := exec.Command(command)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd
 }

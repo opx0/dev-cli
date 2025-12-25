@@ -86,7 +86,7 @@ func (m Model) Update(msg tea.Msg, keys KeyMap) (Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch {
 		case key.Matches(msg, keys.Tab):
-			// Cycle focus: Services → Logs → Images → Stats → Services
+
 			switch m.focus {
 			case FocusServices:
 				m.focus = FocusLogs
@@ -161,7 +161,7 @@ func (m Model) Update(msg tea.Msg, keys KeyMap) (Model, tea.Cmd) {
 			}
 
 		case key.Matches(msg, keys.Start):
-			// Will be handled by parent to call Docker client
+
 			if m.focus == FocusServices {
 				if svc := m.SelectedService(); svc != nil {
 					return m, func() tea.Msg {

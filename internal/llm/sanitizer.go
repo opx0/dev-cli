@@ -63,11 +63,6 @@ func DefaultSanitizer() *Sanitizer {
 				replacement: `[REDACTED_JWT]`,
 				name:        "JWT Token",
 			},
-			{
-				regex:       regexp.MustCompile(`xox[baprs]-[a-zA-Z0-9-]+`),
-				replacement: `[REDACTED_SLACK_TOKEN]`,
-				name:        "Slack Token",
-			},
 		},
 	}
 }

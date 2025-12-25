@@ -6,26 +6,27 @@ import (
 )
 
 type GlobalKeyMap struct {
-	Quit   key.Binding
-	Tab    key.Binding
-	Insert key.Binding
-	Escape key.Binding
-	Up     key.Binding
-	Down   key.Binding
-	Tab1   key.Binding
-	Tab2   key.Binding
-	Tab3   key.Binding
+	Quit     key.Binding
+	Tab      key.Binding
+	Insert   key.Binding
+	Escape   key.Binding
+	Up       key.Binding
+	Down     key.Binding
+	Tab1     key.Binding
+	Tab2     key.Binding
+	Tab3     key.Binding
+	OpenCode key.Binding
 }
 
 func (k GlobalKeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Tab1, k.Tab2, k.Tab3, k.Tab, k.Quit}
+	return []key.Binding{k.Tab1, k.Tab2, k.Tab3, k.Tab, k.OpenCode, k.Quit}
 }
 
 func (k GlobalKeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Tab1, k.Tab2, k.Tab3},
 		{k.Up, k.Down, k.Tab},
-		{k.Insert, k.Escape, k.Quit},
+		{k.Insert, k.Escape, k.OpenCode, k.Quit},
 	}
 }
 
@@ -65,6 +66,10 @@ var GlobalKeys = GlobalKeyMap{
 	Tab3: key.NewBinding(
 		key.WithKeys("3"),
 		key.WithHelp("3", "history"),
+	),
+	OpenCode: key.NewBinding(
+		key.WithKeys("ctrl+o"),
+		key.WithHelp("Ctrl+o", "opencode"),
 	),
 }
 
