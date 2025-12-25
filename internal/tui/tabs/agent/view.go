@@ -323,7 +323,7 @@ func (m Model) renderInputArea(width int) string {
 
 	hint := ""
 	if !m.insertMode {
-		hint = hintStyle.Render("  [i]nsert [?]AI [j/k]nav [z]fold")
+		hint = hintStyle.Render("  [i]nsert [?]AI [j/k]nav [z]fold [O]penCode")
 	} else {
 		hint = hintStyle.Render("  [Enter]run [Esc]normal [?]ask AI")
 	}

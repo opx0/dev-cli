@@ -2,6 +2,7 @@ package agent
 
 import (
 	"dev-cli/internal/executor"
+	"dev-cli/internal/opencode"
 	"dev-cli/internal/pipeline"
 	"dev-cli/internal/plugins/command"
 
@@ -20,6 +21,7 @@ type KeyMap struct {
 	ToggleAI key.Binding
 	RunFix   key.Binding
 	Dismiss  key.Binding
+	OpenCode key.Binding
 }
 
 func DefaultKeyMap() KeyMap {
@@ -63,6 +65,10 @@ func DefaultKeyMap() KeyMap {
 		Dismiss: key.NewBinding(
 			key.WithKeys("d"),
 			key.WithHelp("d", "dismiss"),
+		),
+		OpenCode: key.NewBinding(
+			key.WithKeys("O"),
+			key.WithHelp("O", "OpenCode"),
 		),
 	}
 }
@@ -195,6 +201,10 @@ func (m Model) Update(msg tea.Msg, keys KeyMap) (Model, tea.Cmd) {
 				var cmd tea.Cmd
 				m.input, cmd = m.input.Update(msg)
 				return m, cmd
+
+			case key.Matches(msg, keys.OpenCode):
+				// Handoff to OpenCode with current context
+				return m, handoffToOpenCode(m)
 			}
 		}
 	}
@@ -277,5 +287,41 @@ func requestAIExplain(cmdPlugin *command.Plugin, block pipeline.Block) tea.Cmd {
 			return AIResponseMsg{BlockID: b.ID}
 		}
 		return AIResponseMsg{BlockID: ""}
+	}
+}
+
+// OpenCodeHandoffMsg signals that we're handing off to OpenCode
+type OpenCodeHandoffMsg struct {
+	Error error
+}
+
+func handoffToOpenCode(m Model) tea.Cmd {
+	return func() tea.Msg {
+		adapter := opencode.NewAdapter()
+		if !adapter.IsAvailable() {
+			return OpenCodeHandoffMsg{Error: nil} // OpenCode not available, stay in TUI
+		}
+
+		// Build context from current blocks
+		ctx := &opencode.DebugContext{
+			Issue: "Help me debug the current issue",
+		}
+
+		// Look for last error in blocks
+		blocks := m.Blocks()
+		for i := len(blocks) - 1; i >= 0; i-- {
+			if blocks[i].Type == pipeline.BlockTypeCommand && blocks[i].ExitCode != 0 {
+				ctx.Issue = "Fix: " + blocks[i].Command + "\nError output:\n" + blocks[i].Output
+				break
+			}
+		}
+
+		// Launch OpenCode with context
+		prompt := ctx.ToPrompt()
+		err := adapter.RunPrompt(prompt, opencode.RunOptions{
+			Agent: "build",
+		})
+
+		return OpenCodeHandoffMsg{Error: err}
 	}
 }

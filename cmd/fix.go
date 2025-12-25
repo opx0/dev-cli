@@ -77,7 +77,6 @@ func runWithOpenCode(adapter *opencode.Adapter, issue string) {
 			ctx.RecentHistory = history
 		}
 
-		// Get last failure for signature matching
 		if lastFailure, err := storage.GetLastUnresolvedFailure(db); err == nil && lastFailure != nil {
 			signature := storage.GenerateErrorSignature(lastFailure.Command, lastFailure.ExitCode, lastFailure.Details)
 			ctx.ErrorSignature = signature
