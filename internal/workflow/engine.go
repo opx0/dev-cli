@@ -132,7 +132,7 @@ func (e *Engine) executeSteps(ctx context.Context, wf *Workflow, state *RunState
 			state.Status = StatusPaused
 			state.UpdatedAt = time.Now()
 			if e.store != nil {
-				e.store.SaveRun(state)
+				_ = e.store.SaveRun(state)
 			}
 			return &RunResult{
 				RunID:       state.RunID,
@@ -158,8 +158,8 @@ func (e *Engine) executeSteps(ctx context.Context, wf *Workflow, state *RunState
 			state.SetStepResult(result)
 
 			if e.store != nil {
-				e.store.SaveStepResult(state.RunID, result)
-				e.store.SaveRun(state)
+				_ = e.store.SaveStepResult(state.RunID, result)
+				_ = e.store.SaveRun(state)
 			}
 
 			e.log("⏭ Skipping step: %s (condition not met)", step.Name)
@@ -170,8 +170,8 @@ func (e *Engine) executeSteps(ctx context.Context, wf *Workflow, state *RunState
 		state.SetStepResult(result)
 
 		if e.store != nil {
-			e.store.SaveStepResult(state.RunID, result)
-			e.store.SaveRun(state)
+			_ = e.store.SaveStepResult(state.RunID, result)
+			_ = e.store.SaveRun(state)
 		}
 
 		e.publishEvent(pipeline.Event{
@@ -201,7 +201,7 @@ func (e *Engine) executeSteps(ctx context.Context, wf *Workflow, state *RunState
 				state.Error = result.Error
 				state.CompletedAt = time.Now()
 				if e.store != nil {
-					e.store.SaveRun(state)
+					_ = e.store.SaveRun(state)
 				}
 				return &RunResult{
 					RunID:       state.RunID,
@@ -216,7 +216,7 @@ func (e *Engine) executeSteps(ctx context.Context, wf *Workflow, state *RunState
 				state.Error = result.Error
 				state.CompletedAt = time.Now()
 				if e.store != nil {
-					e.store.SaveRun(state)
+					_ = e.store.SaveRun(state)
 				}
 				return &RunResult{
 					RunID:       state.RunID,
@@ -243,7 +243,7 @@ func (e *Engine) executeSteps(ctx context.Context, wf *Workflow, state *RunState
 	state.Status = StatusCompleted
 	state.CompletedAt = time.Now()
 	if e.store != nil {
-		e.store.SaveRun(state)
+		_ = e.store.SaveRun(state)
 	}
 
 	e.publishEvent(pipeline.Event{
@@ -359,7 +359,7 @@ func (e *Engine) executeRollback(ctx context.Context, wf *Workflow, state *RunSt
 			if stepResult != nil {
 				stepResult.Status = StepRolledBack
 				if e.store != nil {
-					e.store.SaveStepResult(state.RunID, stepResult)
+					_ = e.store.SaveStepResult(state.RunID, stepResult)
 				}
 			}
 		}

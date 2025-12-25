@@ -276,7 +276,7 @@ func (s *CheckpointStore) DeleteRun(runID string) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	_, err = tx.Exec("DELETE FROM workflow_step_results WHERE run_id = ?", runID)
 	if err != nil {

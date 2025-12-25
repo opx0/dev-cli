@@ -164,9 +164,9 @@ func testWatch() {
 	}()
 
 	time.Sleep(1 * time.Second)
-	f.WriteString("Info: System starting...\n")
+	_, _ = f.WriteString("Info: System starting...\n")
 	time.Sleep(500 * time.Millisecond)
-	f.WriteString("Error: Connection refused to database\n")
+	_, _ = f.WriteString("Error: Connection refused to database\n")
 
 	select {
 	case <-done:
@@ -174,7 +174,7 @@ func testWatch() {
 		fatal("Timeout waiting for watch command to detect error")
 	}
 
-	cmd.Process.Kill()
+	_ = cmd.Process.Kill()
 	passTest()
 }
 
@@ -200,9 +200,9 @@ func testFix() {
 	}
 
 	time.Sleep(500 * time.Millisecond)
-	io.WriteString(stdin, "y\n")
+	_, _ = io.WriteString(stdin, "y\n")
 
-	cmd.Wait()
+	_ = cmd.Wait()
 	out := stdout.String()
 
 	if !strings.Contains(out, "Allow? [y/N]") {
