@@ -350,3 +350,80 @@ COMMAND:`, goal, goal)
 
 	return strings.TrimSpace(genResp.Response), nil
 }
+
+// ToolCallResult represents the result of a tool-aware LLM generation.
+type ToolCallResult struct {
+	ToolName   string         `json:"tool_name"`
+	Parameters map[string]any `json:"parameters"`
+	Reasoning  string         `json:"reasoning,omitempty"`
+}
+
+// GenerateWithTools calls the LLM with tool definitions and expects a tool call response.
+func (c *Client) GenerateWithTools(prompt string, toolSchemas string) (*ToolCallResult, error) {
+	systemPrompt := fmt.Sprintf(`You are an AI assistant with access to tools. Based on the user's request, determine which tool to use and with what parameters.
+
+AVAILABLE TOOLS:
+%s
+
+RULES:
+1. Analyze the user's request carefully
+2. Select the most appropriate tool
+3. Determine the correct parameters
+4. Respond with ONLY valid JSON in this exact format:
+{
+  "tool_name": "name_of_tool",
+  "parameters": {
+    "param1": "value1",
+    "param2": "value2"
+  },
+  "reasoning": "brief explanation of why this tool was chosen"
+}
+
+Do NOT include any text outside the JSON object.`, toolSchemas)
+
+	fullPrompt := fmt.Sprintf(`%s
+
+USER REQUEST: %s
+
+JSON RESPONSE:`, systemPrompt, prompt)
+
+	req := generateRequest{
+		Model:  c.model,
+		Prompt: fullPrompt,
+		Stream: false,
+		Format: "json",
+	}
+
+	if os.Getenv("DEV_CLI_OLLAMA_UNLOAD") == "true" {
+		req.KeepAlive = "0m"
+	}
+
+	reqBody, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	resp, err := c.httpClient.Post(c.baseURL+"/api/generate", "application/json", bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, fmt.Errorf("call Ollama: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("ollama status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var genResp generateResponse
+	if err := json.NewDecoder(resp.Body).Decode(&genResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	var result ToolCallResult
+	responseText := strings.TrimSpace(genResp.Response)
+	if err := json.Unmarshal([]byte(responseText), &result); err != nil {
+		return nil, fmt.Errorf("parse tool call: %w (response: %s)", err, responseText)
+	}
+
+	return &result, nil
+}

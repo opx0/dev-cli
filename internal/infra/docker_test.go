@@ -10,10 +10,6 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-// Integration tests using Testcontainers
-// Run with: go test -v -race -run Integration ./internal/infra/...
-// Skip with: go test -short ./...
-
 func TestIntegration_DockerClient_CheckHealth(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -21,7 +17,6 @@ func TestIntegration_DockerClient_CheckHealth(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Start a simple alpine container
 	req := testcontainers.ContainerRequest{
 		Image:        "alpine:latest",
 		Cmd:          []string{"sleep", "30"},
@@ -38,7 +33,6 @@ func TestIntegration_DockerClient_CheckHealth(t *testing.T) {
 	}
 	defer container.Terminate(ctx)
 
-	// Test our DockerClient can see this container
 	client, err := NewDockerClient()
 	if err != nil {
 		t.Fatalf("failed to create docker client: %v", err)
@@ -50,12 +44,10 @@ func TestIntegration_DockerClient_CheckHealth(t *testing.T) {
 		t.Fatalf("docker should be available: %v", health.Error)
 	}
 
-	// Verify we can see at least one container
 	if len(health.Containers) == 0 {
 		t.Error("expected at least one container to be visible")
 	}
 
-	// Find our test container
 	containerID := container.GetContainerID()
 
 	found := false
@@ -81,7 +73,6 @@ func TestIntegration_DockerClient_StartStop(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Start a container that stays running
 	req := testcontainers.ContainerRequest{
 		Image:      "alpine:latest",
 		Cmd:        []string{"sleep", "60"},
@@ -105,12 +96,10 @@ func TestIntegration_DockerClient_StartStop(t *testing.T) {
 	}
 	defer client.Close()
 
-	// Test stop
 	if err := client.StopContainer(ctx, containerID); err != nil {
 		t.Fatalf("failed to stop container: %v", err)
 	}
 
-	// Verify stopped
 	time.Sleep(500 * time.Millisecond)
 	health := client.CheckHealth(ctx)
 	for _, c := range health.Containers {
@@ -122,12 +111,10 @@ func TestIntegration_DockerClient_StartStop(t *testing.T) {
 		}
 	}
 
-	// Test start
 	if err := client.StartContainer(ctx, containerID); err != nil {
 		t.Fatalf("failed to start container: %v", err)
 	}
 
-	// Verify running
 	time.Sleep(500 * time.Millisecond)
 	health = client.CheckHealth(ctx)
 	for _, c := range health.Containers {
@@ -147,7 +134,6 @@ func TestIntegration_DockerClient_ContainerLogs(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Container that outputs something
 	req := testcontainers.ContainerRequest{
 		Image:      "alpine:latest",
 		Cmd:        []string{"sh", "-c", "echo 'test-log-output' && sleep 5"},
@@ -171,7 +157,6 @@ func TestIntegration_DockerClient_ContainerLogs(t *testing.T) {
 	}
 	defer client.Close()
 
-	// Give container time to output logs
 	time.Sleep(1 * time.Second)
 
 	logs, err := client.GetContainerLogs(ctx, containerID, 10)
@@ -183,7 +168,6 @@ func TestIntegration_DockerClient_ContainerLogs(t *testing.T) {
 		t.Error("expected at least one log line")
 	}
 
-	// Check for our expected output
 	found := false
 	for _, line := range logs {
 		if line == "test-log-output" {
@@ -204,7 +188,6 @@ func TestIntegration_MockOllamaAPI(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Use nginx to mock the Ollama API with a static response
 	nginxConf := `
 events {}
 http {
@@ -241,7 +224,6 @@ http {
 	}
 	defer container.Terminate(ctx)
 
-	// Get the mapped port
 	mappedPort, err := container.MappedPort(ctx, "11434")
 	if err != nil {
 		t.Fatalf("failed to get mapped port: %v", err)
@@ -254,15 +236,12 @@ http {
 
 	baseURL := fmt.Sprintf("http://%s:%s", host, mappedPort.Port())
 
-	// Test OllamaClient against mock
 	ollamaClient := NewOllamaClient(nil, baseURL)
 
-	// Test Ping
 	if err := ollamaClient.Ping(ctx); err != nil {
 		t.Fatalf("ping failed: %v", err)
 	}
 
-	// Test ListModels
 	models, err := ollamaClient.ListModels(ctx)
 	if err != nil {
 		t.Fatalf("list models failed: %v", err)
@@ -276,7 +255,6 @@ http {
 		t.Errorf("expected model name 'qwen2.5-coder:3b-instruct', got '%s'", models[0].Name)
 	}
 
-	// Test HasModel
 	hasModel, err := ollamaClient.HasModel(ctx, "qwen2.5-coder")
 	if err != nil {
 		t.Fatalf("has model failed: %v", err)
@@ -286,7 +264,6 @@ http {
 		t.Error("expected HasModel to return true for 'qwen2.5-coder'")
 	}
 
-	// Test HasModel for non-existent model
 	hasModel, err = ollamaClient.HasModel(ctx, "nonexistent-model")
 	if err != nil {
 		t.Fatalf("has model failed: %v", err)

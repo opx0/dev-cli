@@ -68,7 +68,6 @@ func runExport(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	// Format output for OpenCode
 	output := formatForOpenCode(source, logs)
 
 	if exportSave {

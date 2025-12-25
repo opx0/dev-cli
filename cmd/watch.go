@@ -132,7 +132,7 @@ func runWatch(cmd *cobra.Command, args []string) {
 			logContent := strings.Join(buffer, "\n")
 
 			if watchOpenCode {
-				// OpenCode handoff mode
+
 				fmt.Println("\n\033[33m[!] Error detected! Saving for OpenCode...\033[0m")
 				savePath, err := saveErrorForOpenCode(source, logContent)
 				if err != nil {
@@ -142,7 +142,7 @@ func runWatch(cmd *cobra.Command, args []string) {
 					fmt.Printf("\033[36mRun 'opencode' and use: @%s\033[0m\n", savePath)
 				}
 			} else {
-				// Traditional AI analysis mode
+
 				fmt.Println("\n\033[33m[!] Error detected! Analyzing...\033[0m")
 				result, err := client.AnalyzeLog(logContent, watchAI)
 				if err != nil {
