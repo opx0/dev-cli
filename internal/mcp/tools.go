@@ -2,10 +2,12 @@ package mcp
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"dev-cli/internal/storage"
@@ -375,4 +377,248 @@ func removeDuplicates(input []string) []string {
 		}
 	}
 	return result
+}
+
+// registerGetSuggestionsTool registers the get_proactive_suggestions tool.
+func registerGetSuggestionsTool(s *server.MCPServer) {
+	tool := mcp.NewTool("get_proactive_suggestions",
+		mcp.WithDescription("Get proactive debugging suggestions based on command history patterns. Returns failure rates, known fixes, and warnings for commands that frequently fail."),
+		mcp.WithString("command",
+			mcp.Description("Command to analyze for suggestions (optional - if empty, returns recent failure patterns)"),
+		),
+		mcp.WithNumber("limit",
+			mcp.Description("Maximum number of suggestions to return (default: 5)"),
+		),
+	)
+
+	s.AddTool(tool, getSuggestionsHandler)
+}
+
+func getSuggestionsHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := req.GetArguments()
+
+	command, _ := args["command"].(string)
+	limit := 5
+	if l, ok := args["limit"].(float64); ok && l > 0 {
+		limit = int(l)
+	}
+
+	db, err := storage.InitDB()
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to init DB: %v", err)), nil
+	}
+	defer db.Close()
+
+	result := make(map[string]interface{})
+
+	if command != "" {
+		// Get suggestions for specific command
+		stats, err := getCommandStatsFromDB(db, command)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to get stats: %v", err)), nil
+		}
+
+		suggestions := generateSuggestions(stats)
+		result["command"] = command
+		result["stats"] = stats
+		result["suggestions"] = suggestions
+	} else {
+		// Get recent failure patterns
+		patterns, err := getRecentFailurePatternsFromDB(db, limit)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to get patterns: %v", err)), nil
+		}
+		result["failure_patterns"] = patterns
+		result["count"] = len(patterns)
+	}
+
+	jsonBytes, err := json.Marshal(result)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to marshal result: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(string(jsonBytes)), nil
+}
+
+type commandStats struct {
+	CommandPattern string   `json:"command_pattern"`
+	TotalRuns      int      `json:"total_runs"`
+	FailureCount   int      `json:"failure_count"`
+	FailureRate    float64  `json:"failure_rate"`
+	AvgDurationMs  int64    `json:"avg_duration_ms"`
+	CommonFixes    []string `json:"common_fixes,omitempty"`
+}
+
+type proactiveSuggestion struct {
+	Type         string  `json:"type"`
+	Severity     string  `json:"severity"`
+	Message      string  `json:"message"`
+	SuggestedFix string  `json:"suggested_fix,omitempty"`
+	Confidence   float64 `json:"confidence"`
+}
+
+func getCommandStatsFromDB(db *sql.DB, command string) (*commandStats, error) {
+	// Get base command
+	parts := strings.Fields(command)
+	pattern := command
+	if len(parts) > 0 {
+		pattern = parts[0]
+	}
+
+	query := `SELECT command, exit_code, duration_ms 
+			  FROM history 
+			  WHERE command LIKE ? 
+			  ORDER BY timestamp DESC 
+			  LIMIT 100`
+
+	rows, err := db.Query(query, pattern+"%")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	stats := &commandStats{
+		CommandPattern: pattern,
+	}
+	var totalDuration int64
+
+	for rows.Next() {
+		var cmd string
+		var exitCode int
+		var durationMs int64
+		if err := rows.Scan(&cmd, &exitCode, &durationMs); err != nil {
+			continue
+		}
+		stats.TotalRuns++
+		totalDuration += durationMs
+		if exitCode != 0 {
+			stats.FailureCount++
+		}
+	}
+
+	if stats.TotalRuns > 0 {
+		stats.FailureRate = float64(stats.FailureCount) / float64(stats.TotalRuns)
+		stats.AvgDurationMs = totalDuration / int64(stats.TotalRuns)
+	}
+
+	// Look for known solutions
+	signature := storage.GenerateErrorSignature(pattern, 1, "")
+	if solutions, err := storage.GetSolutionsForError(db, signature); err == nil && len(solutions) > 0 {
+		for _, sol := range solutions {
+			stats.CommonFixes = append(stats.CommonFixes, sol.SolutionCommand)
+		}
+	}
+
+	return stats, nil
+}
+
+func generateSuggestions(stats *commandStats) []proactiveSuggestion {
+	var suggestions []proactiveSuggestion
+
+	if stats.TotalRuns < 3 {
+		return suggestions
+	}
+
+	// High failure rate
+	if stats.FailureRate > 0.5 && stats.TotalRuns >= 5 {
+		pct := int(stats.FailureRate * 100)
+		sug := proactiveSuggestion{
+			Type:       "high_failure_rate",
+			Severity:   "medium",
+			Message:    fmt.Sprintf("⚠ This command fails %d%% of the time (%d/%d runs)", pct, stats.FailureCount, stats.TotalRuns),
+			Confidence: stats.FailureRate,
+		}
+		if len(stats.CommonFixes) > 0 {
+			sug.SuggestedFix = stats.CommonFixes[0]
+			sug.Severity = "high"
+		}
+		suggestions = append(suggestions, sug)
+	}
+
+	// Known fix
+	if len(stats.CommonFixes) > 0 {
+		suggestions = append(suggestions, proactiveSuggestion{
+			Type:         "known_fix",
+			Severity:     "high",
+			Message:      "💡 A fix for similar errors is known from your history",
+			SuggestedFix: stats.CommonFixes[0],
+			Confidence:   0.8,
+		})
+	}
+
+	// Slow command
+	if stats.AvgDurationMs > 30000 && stats.TotalRuns >= 3 {
+		secs := stats.AvgDurationMs / 1000
+		suggestions = append(suggestions, proactiveSuggestion{
+			Type:       "slow_command",
+			Severity:   "low",
+			Message:    fmt.Sprintf("⏱ This command typically takes %ds to complete", secs),
+			Confidence: 0.6,
+		})
+	}
+
+	return suggestions
+}
+
+func getRecentFailurePatternsFromDB(db *sql.DB, limit int) ([]commandStats, error) {
+	query := `SELECT command, exit_code, duration_ms 
+			  FROM history 
+			  WHERE exit_code != 0 
+			  ORDER BY timestamp DESC 
+			  LIMIT ?`
+
+	rows, err := db.Query(query, limit*10)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	patternMap := make(map[string]*commandStats)
+
+	for rows.Next() {
+		var command string
+		var exitCode int
+		var durationMs int64
+		if err := rows.Scan(&command, &exitCode, &durationMs); err != nil {
+			continue
+		}
+
+		parts := strings.Fields(command)
+		pattern := command
+		if len(parts) > 0 {
+			pattern = parts[0]
+		}
+
+		if stats, ok := patternMap[pattern]; ok {
+			stats.FailureCount++
+			stats.TotalRuns++
+		} else {
+			patternMap[pattern] = &commandStats{
+				CommandPattern: pattern,
+				FailureCount:   1,
+				TotalRuns:      1,
+			}
+		}
+	}
+
+	var patterns []commandStats
+	for _, stats := range patternMap {
+		stats.FailureRate = float64(stats.FailureCount) / float64(stats.TotalRuns)
+		patterns = append(patterns, *stats)
+	}
+
+	// Sort by failure count descending
+	for i := 0; i < len(patterns)-1; i++ {
+		for j := i + 1; j < len(patterns); j++ {
+			if patterns[j].FailureCount > patterns[i].FailureCount {
+				patterns[i], patterns[j] = patterns[j], patterns[i]
+			}
+		}
+	}
+
+	if len(patterns) > limit {
+		patterns = patterns[:limit]
+	}
+
+	return patterns, nil
 }
