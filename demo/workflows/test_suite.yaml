@@ -1,0 +1,58 @@
+# Test Suite Workflow
+# Demonstrates conditional execution and test pipelines
+
+name: test-suite
+description: CI/CD test workflow with conditional steps
+
+retry:
+  max_attempts: 3
+  delay: 500ms
+
+env:
+  GO_VERSION: "1.21"
+  NODE_VERSION: "20"
+
+steps:
+  - id: setup
+    name: Setup Environment
+    command: echo "Setting up test environment..."
+
+  - id: lint-go
+    name: Lint Go Code
+    command: echo "Running golangci-lint..." && sleep 1 && echo "No issues found!"
+    continue_on_error: true
+
+  - id: lint-js
+    name: Lint JavaScript
+    command: echo "Running eslint..." && sleep 1 && echo "No issues found!"
+    continue_on_error: true
+
+  - id: test-unit
+    name: Unit Tests
+    command: echo "Running unit tests..." && sleep 2 && echo "42 tests passed!"
+    on_failure: stop
+
+  - id: test-integration
+    name: Integration Tests
+    command: echo "Running integration tests..." && sleep 2 && echo "15 tests passed!"
+    condition: ${RUN_INTEGRATION:-true} == "true"
+    on_failure: continue
+
+  - id: test-e2e
+    name: E2E Tests
+    command: echo "Running end-to-end tests..." && sleep 3 && echo "8 tests passed!"
+    condition: ${RUN_E2E:-false} == "true"
+
+  - id: coverage
+    name: Generate Coverage Report
+    command: echo "Coverage: 87.5%"
+
+  - id: report
+    name: Final Report
+    command: |
+      echo "=========================================="
+      echo "Test Suite Complete!"
+      echo "  Unit Tests: PASSED"
+      echo "  Integration: PASSED"
+      echo "  Coverage: 87.5%"
+      echo "=========================================="

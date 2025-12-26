@@ -159,13 +159,18 @@ func GetFailures(db *sql.DB, opts QueryOpts) ([]HistoryItem, error) {
 }
 
 // GetLastUnresolvedFailure returns the most recent failed command that hasn't been resolved.
+// Only returns failures from the last 5 minutes to avoid prompting for stale failures.
 func GetLastUnresolvedFailure(db *sql.DB) (*HistoryItem, error) {
+	// Only consider failures from the last 5 minutes
+	cutoff := time.Now().Add(-5 * time.Minute).Unix()
+
 	query := `SELECT id, timestamp, command, exit_code, duration_ms, directory, session_id, details, COALESCE(resolution, '')
 			  FROM history 
 			  WHERE exit_code != 0 AND exit_code != 130 AND (resolution IS NULL OR resolution = '')
+			  AND timestamp >= ?
 			  ORDER BY id DESC LIMIT 1`
 
-	row := db.QueryRow(query)
+	row := db.QueryRow(query, cutoff)
 	var item HistoryItem
 	var ts int64
 	err := row.Scan(&item.ID, &ts, &item.Command, &item.ExitCode, &item.DurationMs, &item.Directory, &item.SessionID, &item.Details, &item.Resolution)

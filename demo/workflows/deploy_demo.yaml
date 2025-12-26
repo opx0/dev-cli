@@ -1,0 +1,48 @@
+# Deploy Demo Workflow
+# Demonstrates multi-step deployment with rollback capabilities
+
+name: deploy-demo
+description: Sample deployment workflow with rollback
+
+# Global settings
+on_failure: rollback
+retry:
+  max_attempts: 2
+  delay: 1s
+
+env:
+  APP_NAME: demo-app
+  DEPLOY_ENV: staging
+
+steps:
+  - id: check-prereqs
+    name: Check Prerequisites
+    command: echo "Checking prerequisites..."
+
+  - id: run-tests
+    name: Run Tests
+    command: echo "Running test suite..." && sleep 1 && echo "Tests passed!"
+    on_failure: stop
+    rollback:
+      command: echo "Cleaning up test artifacts..."
+
+  - id: build-app
+    name: Build Application
+    command: echo "Building ${APP_NAME}..." && sleep 1 && echo "Build complete!"
+    rollback:
+      command: echo "Removing build artifacts..."
+
+  - id: deploy-staging
+    name: Deploy to Staging
+    command: echo "Deploying to ${DEPLOY_ENV}..." && sleep 1 && echo "Deployed!"
+    rollback:
+      command: echo "Rolling back ${DEPLOY_ENV} deployment..."
+
+  - id: smoke-test
+    name: Run Smoke Tests
+    command: echo "Running smoke tests..." && sleep 1 && echo "All smoke tests passed!"
+    condition: ${DEPLOY_ENV} == "staging"
+
+  - id: notify
+    name: Send Notification
+    command: echo "Deployment of ${APP_NAME} to ${DEPLOY_ENV} completed successfully!"
