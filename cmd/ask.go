@@ -1,18 +1,12 @@
 package cmd
 
 import (
-	"bytes"
-	"dev-cli/internal/ai"
-	"dev-cli/internal/core"
-	"encoding/json"
+	"dev-cli/internal/config"
+	"dev-cli/internal/llm"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"strings"
-	"time"
 
-	"github.com/briandowns/spinner"
 	"github.com/spf13/cobra"
 )
 
@@ -33,7 +27,7 @@ Two modes:
   dev-cli ask tar
   dev-cli ask kubectl
   dev-cli ask git "undo commits"
-  dev-cli ask ffmpeg -n 5          # Get 5 commands
+  dev-cli ask ffmpeg --count 5        # Get 5 commands
 
   # Research Mode: Ask a question
   dev-cli ask "how to mount an NTFS drive on Linux"
@@ -46,9 +40,8 @@ Two modes:
 			os.Setenv("DEV_CLI_FORCE_LOCAL", "1")
 		}
 
-		if err := ai.EnsureOllamaRunning(); err != nil {
-			fmt.Fprintf(os.Stderr, "\033[33m⚠\033[0m Ollama not available: %v\n", err)
-
+		if err := llm.EnsureOllamaRunning(); err != nil {
+			printWarning(fmt.Sprintf("Ollama not available: %v", err))
 		}
 
 		if looksLikeToolName(args) {
@@ -66,18 +59,8 @@ Two modes:
 
 func init() {
 	rootCmd.AddCommand(askCmd)
-	askCmd.Flags().IntVarP(&assistCount, "n", "n", 10, "Number of commands to show (tool mode)")
+	askCmd.Flags().IntVarP(&assistCount, "count", "n", 10, "Number of commands to show (tool mode)")
 	askCmd.Flags().BoolVar(&assistLocal, "local", false, "Force local Ollama (skip Perplexity)")
-}
-
-type AssistResult struct {
-	Prerequisites []string      `json:"prerequisites"`
-	Commands      []CommandInfo `json:"commands"`
-}
-
-type CommandInfo struct {
-	Command     string `json:"command"`
-	Description string `json:"description"`
 }
 
 func looksLikeToolName(args []string) bool {
@@ -104,137 +87,94 @@ func looksLikeToolName(args []string) bool {
 }
 
 func fetchSolutions(query string) {
-	client := ai.NewHybridClient()
+	client := llm.NewHybridClient()
 
 	backend := "Ollama"
 	if client.HasPerplexity() {
 		backend = "Perplexity"
 	}
-	fmt.Printf("\033[90mResearching via %s: %s...\033[0m\n", backend, query)
+	printInfo(fmt.Sprintf("Researching via %s: %s...", backend, query))
 
-	s := spinner.New(spinner.CharSets[14], 100*time.Millisecond)
-	s.Suffix = "Researching..."
-	s.Start()
+	s := newSpinner("Researching...")
 	result, err := client.Research(query)
 	s.Stop()
 
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "\033[31m✗\033[0m Failed to get solutions: %v\n", err)
+		printError(fmt.Sprintf("Failed to get solutions: %v", err))
 		os.Exit(1)
 	}
 
 	if len(result.Solutions) == 0 {
-		fmt.Println("\033[33m!\033[0m No solutions found")
+		printWarning("No solutions found")
 		return
 	}
 
-	fmt.Printf("\n\033[1;32m✓ Found %d Solutions:\033[0m\n\n", len(result.Solutions))
+	fmt.Printf("\n%s Found %d Solutions:%s\n\n", boldGreen, len(result.Solutions), colorReset)
 
 	for _, sol := range result.Solutions {
-		fmt.Printf("\033[1;36m[%d] %s\033[0m\n", sol.ID, sol.Title)
-		fmt.Printf("    \033[37m%s\033[0m\n\n", sol.Description)
+		fmt.Printf("%s[%d] %s%s\n", boldCyan, sol.ID, sol.Title, colorReset)
+		fmt.Printf("    %s%s%s\n\n", colorWhite, sol.Description, colorReset)
 
 		for _, step := range sol.Steps {
 			if step.Type == "command" {
-				fmt.Printf("    \033[90m$\033[0m \033[1;33m%s\033[0m\n", step.Content)
+				fmt.Printf("    %s$%s %s%s%s\n", colorGray, colorReset, boldYellow, step.Content, colorReset)
 				if step.Note != "" {
-					fmt.Printf("      \033[90m# %s\033[0m\n", step.Note)
+					fmt.Printf("      %s# %s%s\n", colorGray, step.Note, colorReset)
 				}
 			} else if step.Type == "file" {
 				lines := strings.Split(step.Content, "\n")
 				lineCount := len(lines)
 
-				fmt.Printf("    \033[90m# %s\033[0m \033[90m(%d lines)\033[0m\n", step.File, lineCount)
-				fmt.Println("    \033[90m```\033[0m")
+				fmt.Printf("    %s# %s (%d lines)%s\n", colorGray, step.File, lineCount, colorReset)
+				fmt.Printf("    %s```%s\n", colorGray, colorReset)
 				for _, line := range lines {
 					fmt.Printf("    %s\n", line)
 				}
-				fmt.Println("    \033[90m```\033[0m")
+				fmt.Printf("    %s```%s\n", colorGray, colorReset)
 
 				if step.Note != "" {
-					fmt.Printf("    \033[90m# %s\033[0m\n", step.Note)
+					fmt.Printf("    %s# %s%s\n", colorGray, step.Note, colorReset)
 				}
 			}
 		}
 
 		if sol.Source != "" {
-			fmt.Printf("\n    \033[90mSource: %s\033[0m\n", sol.Source)
+			fmt.Printf("\n    %sSource: %s%s\n", colorGray, sol.Source, colorReset)
 		}
 		fmt.Println()
 	}
 }
 
 func fetchCommands(toolName, topic string, count int) {
-	cfg := core.LoadConfig()
-	baseURL := cfg.OllamaURL
-	model := cfg.OllamaModel
+	cfg := config.Load()
+	client := llm.NewClient(cfg)
 
 	query := toolName
 	if topic != "important and commonly used" {
 		query = toolName + " " + topic
 	}
 
-	prompt := fmt.Sprintf(`Give me %d useful shell commands for: "%s"
+	s := newSpinner(fmt.Sprintf("Fetching %s commands...", query))
+	result, err := client.CheatSheet(toolName, topic, count)
+	s.Stop()
 
-Include "prerequisites" array with package install commands if special packages are needed.
-
-JSON format:
-{"prerequisites":["sudo pacman -S ntfs-3g"],"commands":[{"command":"sudo mount -t ntfs-3g /dev/sda1 /mnt","description":"Mount NTFS partition"}]}
-
-Commands for "%s":`, count, query, query)
-
-	reqBody, err := json.Marshal(map[string]interface{}{
-		"model":  model,
-		"prompt": prompt,
-		"stream": false,
-		"format": "json",
-	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "\033[33m!\033[0m Failed to create request: %v\n", err)
+		printError(fmt.Sprintf("Failed to fetch commands: %v", err))
 		os.Exit(1)
 	}
 
-	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Post(baseURL+"/api/generate", "application/json", bytes.NewReader(reqBody))
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "\033[33m!\033[0m Failed to connect to Ollama: %v\n", err)
-		os.Exit(1)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		fmt.Fprintf(os.Stderr, "\033[33m!\033[0m Ollama error %d: %s\n", resp.StatusCode, string(body))
-		os.Exit(1)
-	}
-
-	var genResp struct {
-		Response string `json:"response"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&genResp); err != nil {
-		fmt.Fprintf(os.Stderr, "\033[33m!\033[0m Failed to parse response: %v\n", err)
-		os.Exit(1)
-	}
-
-	var result AssistResult
-	responseText := strings.TrimSpace(genResp.Response)
-	if err := json.Unmarshal([]byte(responseText), &result); err != nil {
-		fmt.Println(responseText)
-		return
-	}
-
-	fmt.Printf("\n\033[1;36m%s\033[0m\n", query)
+	fmt.Printf("\n%s%s%s\n", boldCyan, query, colorReset)
 
 	if len(result.Prerequisites) > 0 {
-		fmt.Println("\n\033[1;33m> Prerequisites:\033[0m")
+		fmt.Printf("\n%s> Prerequisites:%s\n", boldYellow, colorReset)
 		for _, pkg := range result.Prerequisites {
-			fmt.Printf("   \033[90m$\033[0m %s\n", pkg)
+			fmt.Printf("   %s$%s %s\n", colorGray, colorReset, pkg)
 		}
 	}
 
-	fmt.Println("\n\033[1;32m> Commands:\033[0m")
+	fmt.Printf("\n%s> Commands:%s\n", boldGreen, colorReset)
 	for i, cmd := range result.Commands {
-		fmt.Printf("  \033[32m%2d.\033[0m \033[1m%s\033[0m\n", i+1, cmd.Command)
-		fmt.Printf("      \033[90m%s\033[0m\n\n", cmd.Description)
+		fmt.Printf("  %s%2d.%s %s%s%s\n", colorGreen, i+1, colorReset, colorBold, cmd.Command, colorReset)
+		fmt.Printf("      %s%s%s\n\n", colorGray, cmd.Description, colorReset)
 	}
 }

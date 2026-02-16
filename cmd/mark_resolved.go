@@ -34,15 +34,10 @@ var markResolvedCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		db, err := storage.InitDB()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error opening db: %v\n", err)
-			os.Exit(1)
-		}
-		defer db.Close()
+		db := storage.DB()
 
 		if err := storage.MarkResolution(db, resolveID, resolveResolution); err != nil {
-			fmt.Fprintf(os.Stderr, "error marking resolution: %v\n", err)
+			printError(fmt.Sprintf("marking resolution: %v", err))
 			os.Exit(1)
 		}
 	},
@@ -53,11 +48,7 @@ var checkLastFailureCmd = &cobra.Command{
 	Short:  "Check if there's an unresolved failure",
 	Hidden: true,
 	Run: func(cmd *cobra.Command, args []string) {
-		db, err := storage.InitDB()
-		if err != nil {
-			os.Exit(1)
-		}
-		defer db.Close()
+		db := storage.DB()
 
 		failure, err := storage.GetLastUnresolvedFailure(db)
 		if err != nil {

@@ -2,8 +2,6 @@ package cmd
 
 import (
 	"bufio"
-	"dev-cli/internal/ai"
-	"dev-cli/internal/core"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,7 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/briandowns/spinner"
+	"dev-cli/internal/config"
+	"dev-cli/internal/executor"
+	"dev-cli/internal/llm"
+	"dev-cli/internal/storage"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -57,7 +58,7 @@ Reads from your command history (requires shell integration via 'dev-cli init zs
 		if explainExitCode == 130 {
 			return
 		}
-		analyzeEntry(core.LogEntry{
+		analyzeEntry(storage.LogEntry{
 			Command:  explainCommand,
 			ExitCode: explainExitCode,
 			Output:   explainOutput,
@@ -79,18 +80,14 @@ func init() {
 }
 
 func analyzeFromLog(limit int, filterStr, sinceStr string, interactive bool) {
-	db, err := core.InitDB()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "⚠️  Failed to open db: %v\n", err)
-		return
-	}
-	defer db.Close()
+	db := storage.DB()
 
 	var sinceDur time.Duration
 	if sinceStr != "" {
+		var err error
 		sinceDur, err = time.ParseDuration(sinceStr)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "⚠️  Invalid duration: %v\n", err)
+			printWarning(fmt.Sprintf("Invalid duration: %v", err))
 			return
 		}
 	}
@@ -99,13 +96,13 @@ func analyzeFromLog(limit int, filterStr, sinceStr string, interactive bool) {
 		limit = 1
 	}
 
-	items, err := core.GetFailures(db, core.QueryOpts{
+	items, err := storage.GetFailures(db, storage.QueryOpts{
 		Limit:  limit,
 		Filter: filterStr,
 		Since:  sinceDur,
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "⚠️  Failed to read history: %v\n", err)
+		printWarning(fmt.Sprintf("Failed to read history: %v", err))
 		return
 	}
 
@@ -125,7 +122,7 @@ func analyzeFromLog(limit int, filterStr, sinceStr string, interactive bool) {
 			}
 		}
 
-		analyzeEntry(core.LogEntry{
+		analyzeEntry(storage.LogEntry{
 			Command:  item.Command,
 			ExitCode: item.ExitCode,
 			Output:   output,
@@ -133,45 +130,40 @@ func analyzeFromLog(limit int, filterStr, sinceStr string, interactive bool) {
 	}
 }
 
-func analyzeEntry(entry core.LogEntry, interactive bool) {
-	fmt.Printf("\n\033[31m×\033[0m %s \033[90m(exit %d)\033[0m\n", entry.Command, entry.ExitCode)
+func analyzeEntry(entry storage.LogEntry, interactive bool) {
+	fmt.Printf("\n%s %s %s(exit %d)%s\n", iconFail(), entry.Command, colorGray, entry.ExitCode, colorReset)
 
-	if err := ai.EnsureOllamaRunning(); err != nil {
-		fmt.Fprintf(os.Stderr, "\033[33m⚠\033[0m Ollama not available: %v\n", err)
+	if err := llm.EnsureOllamaRunning(); err != nil {
+		printWarning(fmt.Sprintf("Ollama not available: %v", err))
 		return
 	}
 
-	s := spinner.New(spinner.CharSets[14], 100*time.Millisecond)
-	s.Suffix = " 🧠 Analyzing failure..."
-	s.Start()
+	s := newSpinner("Analyzing failure...")
 
-	client := ai.NewOllamaClient(core.LoadConfig())
+	cfg := config.Load()
+	client := llm.NewClient(cfg)
 	result, err := client.Explain(entry.Command, entry.ExitCode, entry.Output)
 	s.Stop()
 
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "\033[33m⚠\033[0m Analysis failed: %v\n", err)
+		printWarning(fmt.Sprintf("Analysis failed: %v", err))
 		return
 	}
 
-	fmt.Printf("  \033[90m→\033[0m %s\n", result.Explanation)
+	fmt.Printf("  %s %s\n", iconInfo(), result.Explanation)
 
 	if result.Fix != "" {
-		fmt.Printf("  \033[32m$\033[0m %s\n", result.Fix)
+		fmt.Printf("  %s$%s %s\n", colorGreen, colorReset, result.Fix)
 
 		if interactive {
-			dangerousPatterns := []string{"rm -rf", "rm -r /", "dd if=", "mkfs", "> /dev/", "chmod 777", ":(){ :|:& };:"}
-			for _, pattern := range dangerousPatterns {
-				if strings.Contains(result.Fix, pattern) {
-					fmt.Fprintf(os.Stderr, "   \033[31m⚠ WARNING: Potentially dangerous command detected (%s)\033[0m\n", pattern)
-					fmt.Print("   This command could cause data loss. Are you SURE? (yes/no): ")
-					reader := bufio.NewReader(os.Stdin)
-					response, _ := reader.ReadString('\n')
-					if strings.TrimSpace(strings.ToLower(response)) != "yes" {
-						fmt.Println("   Aborted.")
-						return
-					}
-					break
+			if pattern := executor.IsDangerousCommand(result.Fix); pattern != "" {
+				fmt.Fprintf(os.Stderr, "   %sWARNING: Potentially dangerous command detected (%s)%s\n", colorRed, pattern, colorReset)
+				fmt.Print("   This command could cause data loss. Are you SURE? (yes/no): ")
+				reader := bufio.NewReader(os.Stdin)
+				response, _ := reader.ReadString('\n')
+				if strings.TrimSpace(strings.ToLower(response)) != "yes" {
+					fmt.Println("   Aborted.")
+					return
 				}
 			}
 
@@ -187,9 +179,9 @@ func analyzeEntry(entry core.LogEntry, interactive bool) {
 				cmd.Stderr = os.Stderr
 				cmd.Stdin = os.Stdin
 				if err := cmd.Run(); err != nil {
-					fmt.Fprintf(os.Stderr, "   \033[33m⚠\033[0m Fix failed: %v\n", err)
+					printWarning(fmt.Sprintf("Fix failed: %v", err))
 				} else {
-					fmt.Println("   \033[32m✓\033[0m Fix applied")
+					printSuccess("Fix applied")
 				}
 			}
 		}

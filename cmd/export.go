@@ -6,9 +6,9 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
-	"time"
+
+	"dev-cli/internal/storage"
 
 	"github.com/spf13/cobra"
 )
@@ -64,22 +64,20 @@ func runExport(cmd *cobra.Command, args []string) {
 	}
 
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		printError(fmt.Sprintf("%v", err))
 		os.Exit(1)
 	}
 
-	output := formatForOpenCode(source, logs)
-
 	if exportSave {
-		savePath, err := saveForOpenCode(output)
+		savePath, err := storage.SaveErrorContext(source, logs)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error saving: %v\n", err)
+			printError(fmt.Sprintf("Error saving: %v", err))
 			os.Exit(1)
 		}
-		fmt.Fprintf(os.Stderr, "\033[32mSaved to: %s\033[0m\n", savePath)
-		fmt.Fprintf(os.Stderr, "\033[36mRun 'opencode' and use: @%s\033[0m\n", savePath)
+		printSuccess(fmt.Sprintf("Saved to: %s", savePath))
+		fmt.Printf("%sRun 'opencode' and use: @%s%s\n", colorCyan, savePath, colorReset)
 	} else {
-		fmt.Print(output)
+		fmt.Print(logs)
 	}
 }
 
@@ -99,7 +97,6 @@ func getFileLogs(filePath string, lines int) (string, error) {
 	}
 	defer file.Close()
 
-	// Read all lines and get last N
 	var allLines []string
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
@@ -116,37 +113,4 @@ func getFileLogs(filePath string, lines int) (string, error) {
 	}
 
 	return strings.Join(allLines[start:], "\n"), nil
-}
-
-func formatForOpenCode(source string, logs string) string {
-	var sb strings.Builder
-	sb.WriteString("# Error Context from dev-cli\n\n")
-	sb.WriteString(fmt.Sprintf("**Source:** %s\n", source))
-	sb.WriteString(fmt.Sprintf("**Exported:** %s\n\n", time.Now().Format(time.RFC3339)))
-	sb.WriteString("## Logs\n\n")
-	sb.WriteString("```\n")
-	sb.WriteString(logs)
-	sb.WriteString("\n```\n\n")
-	sb.WriteString("## Instructions\n\n")
-	sb.WriteString("Analyze these logs, identify any errors or issues, and suggest fixes.\n")
-	return sb.String()
-}
-
-func saveForOpenCode(content string) (string, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-
-	devCliDir := filepath.Join(homeDir, ".devlogs")
-	if err := os.MkdirAll(devCliDir, 0755); err != nil {
-		return "", err
-	}
-
-	savePath := filepath.Join(devCliDir, "last-error.md")
-	if err := os.WriteFile(savePath, []byte(content), 0644); err != nil {
-		return "", err
-	}
-
-	return savePath, nil
 }

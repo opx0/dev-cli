@@ -48,11 +48,7 @@ var logEventCmd = &cobra.Command{
 			return
 		}
 
-		db, err := storage.InitDB()
-		if err != nil {
-			return
-		}
-		defer db.Close()
+		db := storage.DB()
 
 		entry := storage.LogEntry{
 			Command:    logCommand,

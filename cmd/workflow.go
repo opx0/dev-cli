@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"os"
 	"os/signal"
@@ -50,17 +49,13 @@ var workflowRunCmd = &cobra.Command{
 			return fmt.Errorf("failed to parse workflow: %w", err)
 		}
 
-		fmt.Printf("🚀 Starting workflow: %s\n", wf.Name)
+		fmt.Printf("Starting workflow: %s\n", fmtBold(wf.Name))
 		if wf.Description != "" {
 			fmt.Printf("   %s\n", wf.Description)
 		}
 		fmt.Printf("   Steps: %d\n\n", len(wf.Steps))
 
-		db, err := storage.InitDB()
-		if err != nil {
-			return fmt.Errorf("failed to initialize database: %w", err)
-		}
-		defer db.Close()
+		db := storage.DB()
 
 		store := workflow.NewCheckpointStore(db)
 		if err := store.InitSchema(); err != nil {
@@ -78,7 +73,7 @@ var workflowRunCmd = &cobra.Command{
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 		go func() {
 			<-sigCh
-			fmt.Println("\n⏸ Received interrupt, saving checkpoint...")
+			fmt.Println("\nReceived interrupt, saving checkpoint...")
 			cancel()
 		}()
 
@@ -102,11 +97,7 @@ var workflowResumeCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		runID := args[0]
 
-		db, err := storage.InitDB()
-		if err != nil {
-			return fmt.Errorf("failed to initialize database: %w", err)
-		}
-		defer db.Close()
+		db := storage.DB()
 
 		store := workflow.NewCheckpointStore(db)
 
@@ -125,7 +116,7 @@ var workflowResumeCmd = &cobra.Command{
 			return fmt.Errorf("failed to parse workflow: %w", err)
 		}
 
-		fmt.Printf("▶ Resuming workflow: %s (run: %s)\n", wf.Name, runID)
+		fmt.Printf("Resuming workflow: %s (run: %s)\n", fmtBold(wf.Name), runID)
 		fmt.Printf("  Current step: %d/%d\n\n", state.CurrentStepIdx+1, len(wf.Steps))
 
 		bus := pipeline.NewEventBus()
@@ -139,7 +130,7 @@ var workflowResumeCmd = &cobra.Command{
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 		go func() {
 			<-sigCh
-			fmt.Println("\n⏸ Received interrupt, saving checkpoint...")
+			fmt.Println("\nReceived interrupt, saving checkpoint...")
 			cancel()
 		}()
 
@@ -159,11 +150,7 @@ var workflowListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List recent workflow runs",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		db, err := storage.InitDB()
-		if err != nil {
-			return fmt.Errorf("failed to initialize database: %w", err)
-		}
-		defer db.Close()
+		db := storage.DB()
 
 		store := workflow.NewCheckpointStore(db)
 		if err := store.InitSchema(); err != nil {
@@ -212,11 +199,7 @@ var workflowStatusCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		runID := args[0]
 
-		db, err := storage.InitDB()
-		if err != nil {
-			return fmt.Errorf("failed to initialize database: %w", err)
-		}
-		defer db.Close()
+		db := storage.DB()
 
 		store := workflow.NewCheckpointStore(db)
 		state, err := store.LoadRun(runID)
@@ -263,11 +246,7 @@ var workflowRollbackCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		runID := args[0]
 
-		db, err := storage.InitDB()
-		if err != nil {
-			return fmt.Errorf("failed to initialize database: %w", err)
-		}
-		defer db.Close()
+		db := storage.DB()
 
 		store := workflow.NewCheckpointStore(db)
 		state, err := store.LoadRun(runID)
@@ -285,7 +264,7 @@ var workflowRollbackCmd = &cobra.Command{
 			return fmt.Errorf("failed to parse workflow: %w", err)
 		}
 
-		fmt.Printf("↺ Rolling back workflow: %s\n", wf.Name)
+		fmt.Printf("Rolling back workflow: %s\n", fmtBold(wf.Name))
 
 		bus := pipeline.NewEventBus()
 		engine := workflow.NewEngine(store, bus)
@@ -296,7 +275,7 @@ var workflowRollbackCmd = &cobra.Command{
 			return fmt.Errorf("rollback failed: %w", err)
 		}
 
-		fmt.Println("\n✓ Rollback completed")
+		printSuccess("Rollback completed")
 		return nil
 	},
 }
@@ -320,31 +299,31 @@ func printRunResult(result *workflow.RunResult) {
 
 	switch result.Status {
 	case workflow.StatusCompleted:
-		fmt.Printf("✓ Workflow completed successfully in %s\n", result.Duration.Truncate(time.Second))
+		printSuccess(fmt.Sprintf("Workflow completed successfully in %s", result.Duration.Truncate(time.Second)))
 	case workflow.StatusPaused:
-		fmt.Printf("⏸ Workflow paused. Resume with:\n  dev-cli workflow resume %s\n", result.RunID)
+		fmt.Printf("Workflow paused. Resume with:\n  dev-cli workflow resume %s\n", result.RunID)
 	case workflow.StatusFailed:
-		fmt.Printf("✗ Workflow failed: %s\n", result.Error)
+		printError(fmt.Sprintf("Workflow failed: %s", result.Error))
 		fmt.Printf("  Resume with: dev-cli workflow resume %s\n", result.RunID)
 	case workflow.StatusRolledBack:
-		fmt.Printf("↺ Workflow rolled back after failure: %s\n", result.Error)
+		fmt.Printf("Workflow rolled back after failure: %s\n", result.Error)
 	default:
-		fmt.Printf("? Workflow ended with status: %s\n", result.Status)
+		fmt.Printf("Workflow ended with status: %s\n", result.Status)
 	}
 }
 
 func formatStatus(status workflow.RunStatus) string {
 	switch status {
 	case workflow.StatusCompleted:
-		return "✓ completed"
+		return fmtColor(colorGreen, "completed")
 	case workflow.StatusRunning:
-		return "▶ running"
+		return fmtColor(colorCyan, "running")
 	case workflow.StatusPaused:
-		return "⏸ paused"
+		return fmtColor(colorYellow, "paused")
 	case workflow.StatusFailed:
-		return "✗ failed"
+		return fmtColor(colorRed, "failed")
 	case workflow.StatusRolledBack:
-		return "↺ rolledback"
+		return fmtColor(colorYellow, "rolledback")
 	default:
 		return string(status)
 	}
@@ -353,22 +332,21 @@ func formatStatus(status workflow.RunStatus) string {
 func formatStepStatus(status workflow.StepStatus) string {
 	switch status {
 	case workflow.StepSuccess:
-		return "✓"
+		return iconOK()
 	case workflow.StepFailed:
-		return "✗"
+		return iconFail()
 	case workflow.StepSkipped:
-		return "⏭"
+		return fmtColor(colorGray, "skip")
 	case workflow.StepRolledBack:
-		return "↺"
+		return fmtColor(colorYellow, "rollback")
 	case workflow.StepRunning:
-		return "▶"
+		return fmtColor(colorCyan, "running")
 	default:
 		return string(status)
 	}
 }
 
 func findWorkflowFile(workflowID, workflowName string) (string, error) {
-
 	home, _ := os.UserHomeDir()
 	searchPaths := []string{
 		filepath.Join(home, ".devlogs", "workflows"),
@@ -405,9 +383,4 @@ func findWorkflowFile(workflowID, workflowName string) (string, error) {
 	}
 
 	return "", fmt.Errorf("could not find workflow %q", workflowName)
-}
-
-// GetDB returns a database connection (for use by external callers)
-func GetDB() (*sql.DB, error) {
-	return storage.InitDB()
 }

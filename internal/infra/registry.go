@@ -1,12 +1,13 @@
 package infra
 
 import (
+	"dev-cli/internal/config"
 	"sync"
 )
 
 type Registry struct {
 	mu     sync.RWMutex
-	config Config
+	cfg    *config.Config
 	docker *DockerClient
 	ollama *OllamaClient
 	gpu    GPUProvider
@@ -20,25 +21,25 @@ var (
 func GetRegistry() *Registry {
 	registryOnce.Do(func() {
 		registry = &Registry{
-			config: DefaultConfig(),
+			cfg: config.Current,
 		}
 	})
 	return registry
 }
 
-func GetRegistryWithConfig(config Config) *Registry {
+func GetRegistryWithConfig(cfg *config.Config) *Registry {
 	registryOnce.Do(func() {
 		registry = &Registry{
-			config: config,
+			cfg: cfg,
 		}
 	})
 	return registry
 }
 
-func (r *Registry) Config() Config {
+func (r *Registry) Config() *config.Config {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.config
+	return r.cfg
 }
 
 func (r *Registry) Docker() (*DockerClient, error) {
@@ -84,7 +85,7 @@ func (r *Registry) Ollama() (*OllamaClient, error) {
 		return nil, err
 	}
 
-	r.ollama = NewOllamaClient(docker, r.config.OllamaBaseURL)
+	r.ollama = NewOllamaClient(docker, r.cfg.OllamaURL)
 	return r.ollama, nil
 }
 

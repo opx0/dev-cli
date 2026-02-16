@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"dev-cli/internal/config"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -36,6 +37,7 @@ func TestExplain_CommandNotFound(t *testing.T) {
 	client := &Client{
 		baseURL:    server.URL,
 		model:      "test-model",
+		cfg:        &config.Config{},
 		httpClient: http.DefaultClient,
 	}
 
@@ -64,6 +66,7 @@ func TestExplain_WithFix(t *testing.T) {
 	client := &Client{
 		baseURL:    server.URL,
 		model:      "test-model",
+		cfg:        &config.Config{},
 		httpClient: http.DefaultClient,
 	}
 

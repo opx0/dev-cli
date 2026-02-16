@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"dev-cli/internal/config"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -29,6 +30,7 @@ func TestAnalyzeLog_Parsing(t *testing.T) {
 	client := &Client{
 		baseURL:    server.URL,
 		model:      "test-model",
+		cfg:        &config.Config{},
 		httpClient: server.Client(),
 	}
 
@@ -59,6 +61,7 @@ func TestAnalyzeLog_MalformedJSON(t *testing.T) {
 	client := &Client{
 		baseURL:    server.URL,
 		model:      "test-model",
+		cfg:        &config.Config{},
 		httpClient: server.Client(),
 	}
 

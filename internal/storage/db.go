@@ -5,9 +5,42 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	_ "modernc.org/sqlite"
 )
+
+// --- Singleton DB access ---
+
+var (
+	dbOnce sync.Once
+	dbInst *sql.DB
+	dbErr  error
+)
+
+// DB returns a lazily-initialized singleton database connection.
+// It uses config.Current.LogDir for the database path.
+// Panics if the database cannot be opened — this ensures a fast fail
+// at startup rather than silent errors.
+func DB() *sql.DB {
+	dbOnce.Do(func() {
+		dbInst, dbErr = InitDB()
+	})
+	if dbErr != nil {
+		panic("storage: failed to init db: " + dbErr.Error())
+	}
+	return dbInst
+}
+
+// ResetDB is for testing — forces re-initialization on next DB() call.
+func ResetDB() {
+	if dbInst != nil {
+		dbInst.Close()
+	}
+	dbOnce = sync.Once{}
+	dbInst = nil
+	dbErr = nil
+}
 
 func InitDB() (*sql.DB, error) {
 	var dbPath string

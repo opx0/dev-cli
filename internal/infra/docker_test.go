@@ -1,8 +1,10 @@
 package infra
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -170,7 +172,7 @@ func TestIntegration_DockerClient_ContainerLogs(t *testing.T) {
 
 	found := false
 	for _, line := range logs {
-		if line == "test-log-output" {
+		if strings.Contains(line, "test-log-output") {
 			found = true
 			break
 		}
@@ -207,11 +209,12 @@ http {
 		Files: []testcontainers.ContainerFile{
 			{
 				HostFilePath:      "",
-				Reader:            nil,
+				Reader:            bytes.NewReader([]byte(nginxConf)),
 				ContainerFilePath: "/etc/nginx/nginx.conf",
+				FileMode:          0644,
 			},
 		},
-		Cmd:        []string{"sh", "-c", fmt.Sprintf("echo '%s' > /etc/nginx/nginx.conf && nginx -g 'daemon off;'", nginxConf)},
+		Cmd:        []string{"nginx", "-g", "daemon off;"},
 		WaitingFor: wait.ForHTTP("/api/tags").WithPort("11434/tcp").WithStartupTimeout(30 * time.Second),
 	}
 

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -79,6 +78,7 @@ type ExplainResult struct {
 type Client struct {
 	baseURL    string
 	model      string
+	cfg        *config.Config
 	httpClient *http.Client
 }
 
@@ -96,6 +96,7 @@ func NewClient(cfg *config.Config) *Client {
 	return &Client{
 		baseURL: baseURL,
 		model:   model,
+		cfg:     cfg,
 		httpClient: &http.Client{
 			Timeout: RequestTimeout,
 		},
@@ -147,7 +148,7 @@ JSON response:`, cmd, exitCode, output)
 		Format: "json",
 	}
 
-	if os.Getenv("DEV_CLI_OLLAMA_UNLOAD") == "true" {
+	if c.cfg.OllamaUnload {
 		req.KeepAlive = "0m"
 	}
 
@@ -215,7 +216,7 @@ OUTPUT JSON ONLY:
 		Format: "json",
 	}
 
-	if os.Getenv("DEV_CLI_OLLAMA_UNLOAD") == "true" {
+	if c.cfg.OllamaUnload {
 		req.KeepAlive = "0m"
 	}
 
@@ -270,7 +271,7 @@ LOGS:
 		Format: "json",
 	}
 
-	if os.Getenv("DEV_CLI_OLLAMA_UNLOAD") == "true" {
+	if c.cfg.OllamaUnload {
 		req.KeepAlive = "0m"
 	}
 
@@ -323,7 +324,7 @@ COMMAND:`, goal, goal)
 		Stream: false,
 	}
 
-	if os.Getenv("DEV_CLI_OLLAMA_UNLOAD") == "true" {
+	if c.cfg.OllamaUnload {
 		req.KeepAlive = "0m"
 	}
 
@@ -349,6 +350,80 @@ COMMAND:`, goal, goal)
 	}
 
 	return strings.TrimSpace(genResp.Response), nil
+}
+
+// ── CheatSheet ───────────────────────────────────────────────────────────────
+
+// CheatSheetResult holds the prerequisites and commands returned by CheatSheet.
+type CheatSheetResult struct {
+	Prerequisites []string        `json:"prerequisites"`
+	Commands      []CheatSheetCmd `json:"commands"`
+}
+
+// CheatSheetCmd is a single command entry in a cheat sheet.
+type CheatSheetCmd struct {
+	Command     string `json:"command"`
+	Description string `json:"description"`
+}
+
+// CheatSheet generates a list of useful shell commands for the given tool/topic.
+func (c *Client) CheatSheet(tool, topic string, count int) (*CheatSheetResult, error) {
+	query := tool
+	if topic != "important and commonly used" {
+		query = tool + " " + topic
+	}
+
+	prompt := fmt.Sprintf(`Give me %d useful shell commands for: "%s"
+
+Include "prerequisites" array with package install commands if special packages are needed.
+
+JSON format:
+{"prerequisites":["sudo pacman -S ntfs-3g"],"commands":[{"command":"sudo mount -t ntfs-3g /dev/sda1 /mnt","description":"Mount NTFS partition"}]}
+
+Commands for "%s":`, count, query, query)
+
+	req := generateRequest{
+		Model:  c.model,
+		Prompt: prompt,
+		Stream: false,
+		Format: "json",
+	}
+
+	if c.cfg.OllamaUnload {
+		req.KeepAlive = "0m"
+	}
+
+	reqBody, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	resp, err := c.httpClient.Post(c.baseURL+"/api/generate", "application/json", bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, fmt.Errorf("call Ollama: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("ollama status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var genResp generateResponse
+	if err := json.NewDecoder(resp.Body).Decode(&genResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	var result CheatSheetResult
+	responseText := strings.TrimSpace(genResp.Response)
+	if err := json.Unmarshal([]byte(responseText), &result); err != nil {
+		// If JSON parsing fails, return raw text as a single command entry
+		return &CheatSheetResult{
+			Commands: []CheatSheetCmd{{Command: responseText, Description: "raw response"}},
+		}, nil
+	}
+
+	return &result, nil
 }
 
 // ToolCallResult represents the result of a tool-aware LLM generation.
@@ -394,7 +469,7 @@ JSON RESPONSE:`, systemPrompt, prompt)
 		Format: "json",
 	}
 
-	if os.Getenv("DEV_CLI_OLLAMA_UNLOAD") == "true" {
+	if c.cfg.OllamaUnload {
 		req.KeepAlive = "0m"
 	}
 

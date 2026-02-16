@@ -6,11 +6,11 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"dev-cli/internal/llm"
+	"dev-cli/internal/storage"
 
 	"github.com/spf13/cobra"
 )
@@ -64,29 +64,29 @@ func runWatch(cmd *cobra.Command, args []string) {
 
 	if watchDocker != "" {
 		source = fmt.Sprintf("Docker container: %s", watchDocker)
-		fmt.Printf("\033[36mWatching Docker container: %s\033[0m\n", watchDocker)
+		fmt.Printf("%sWatching Docker container: %s%s\n", colorCyan, watchDocker, colorReset)
 		c := exec.Command("docker", "logs", "-f", "--tail", "20", watchDocker)
 		logStream, err = c.StdoutPipe()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error getting stdout pipe: %v\n", err)
+			printError(fmt.Sprintf("Error getting stdout pipe: %v", err))
 			os.Exit(1)
 		}
 		c.Stderr = c.Stdout
 		if err := c.Start(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error starting docker logs: %v\n", err)
+			printError(fmt.Sprintf("Error starting docker logs: %v", err))
 			os.Exit(1)
 		}
 	} else {
 		source = fmt.Sprintf("Log file: %s", watchFile)
-		fmt.Printf("\033[36mWatching file: %s\033[0m\n", watchFile)
+		fmt.Printf("%sWatching file: %s%s\n", colorCyan, watchFile, colorReset)
 		c := exec.Command("tail", "-f", "-n", "20", watchFile)
 		logStream, err = c.StdoutPipe()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error getting stdout pipe: %v\n", err)
+			printError(fmt.Sprintf("Error getting stdout pipe: %v", err))
 			os.Exit(1)
 		}
 		if err := c.Start(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error starting tail: %v\n", err)
+			printError(fmt.Sprintf("Error starting tail: %v", err))
 			os.Exit(1)
 		}
 	}
@@ -105,9 +105,9 @@ func runWatch(cmd *cobra.Command, args []string) {
 	}
 
 	if watchOpenCode {
-		fmt.Println("\033[90mOpenCode mode: errors will be saved for handoff (Ctrl+C to exit)\033[0m")
+		printInfo("OpenCode mode: errors will be saved for handoff (Ctrl+C to exit)")
 	} else {
-		fmt.Println("\033[90mWaiting for logs... (Ctrl+C to exit)\033[0m")
+		printInfo("Waiting for logs... (Ctrl+C to exit)")
 	}
 
 	for scanner.Scan() {
@@ -132,64 +132,32 @@ func runWatch(cmd *cobra.Command, args []string) {
 			logContent := strings.Join(buffer, "\n")
 
 			if watchOpenCode {
-
-				fmt.Println("\n\033[33m[!] Error detected! Saving for OpenCode...\033[0m")
-				savePath, err := saveErrorForOpenCode(source, logContent)
+				fmt.Printf("\n%s[!] Error detected! Saving for OpenCode...%s\n", colorYellow, colorReset)
+				savePath, err := storage.SaveErrorContext(source, logContent)
 				if err != nil {
-					fmt.Printf("\033[31mError saving context: %v\033[0m\n", err)
+					printError(fmt.Sprintf("Error saving context: %v", err))
 				} else {
-					fmt.Printf("\033[32mSaved to: %s\033[0m\n", savePath)
-					fmt.Printf("\033[36mRun 'opencode' and use: @%s\033[0m\n", savePath)
+					printSuccess(fmt.Sprintf("Saved to: %s", savePath))
+					fmt.Printf("%sRun 'opencode' and use: @%s%s\n", colorCyan, savePath, colorReset)
 				}
 			} else {
-
-				fmt.Println("\n\033[33m[!] Error detected! Analyzing...\033[0m")
+				fmt.Printf("\n%s[!] Error detected! Analyzing...%s\n", colorYellow, colorReset)
 				result, err := client.AnalyzeLog(logContent, watchAI)
 				if err != nil {
-					fmt.Printf("\033[31mError analyzing log: %v\033[0m\n", err)
+					printError(fmt.Sprintf("Error analyzing log: %v", err))
 				} else {
 					aiSource := "Local"
 					if watchAI == "cloud" {
 						aiSource = "Cloud"
 					}
-					fmt.Printf("\033[90m> [%s AI]\033[0m \033[1m%s\033[0m\n", aiSource, result.Explanation)
+					fmt.Printf("%s> [%s AI]%s %s%s%s\n", colorGray, aiSource, colorReset, colorBold, result.Explanation, colorReset)
 					if result.Fix != "" {
-						fmt.Printf("\033[32mSuggested Fix: %s\033[0m\n", result.Fix)
+						fmt.Printf("%sSuggested Fix: %s%s\n", colorGreen, result.Fix, colorReset)
 					}
 				}
 			}
-			fmt.Println("\033[90m----------------------------------------\033[0m")
+			separator()
 			lastAnalysis = time.Now()
 		}
 	}
-}
-
-func saveErrorForOpenCode(source, logs string) (string, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-
-	devCliDir := filepath.Join(homeDir, ".devlogs")
-	if err := os.MkdirAll(devCliDir, 0755); err != nil {
-		return "", err
-	}
-
-	var sb strings.Builder
-	sb.WriteString("# Error Context from dev-cli watch\n\n")
-	sb.WriteString(fmt.Sprintf("**Source:** %s\n", source))
-	sb.WriteString(fmt.Sprintf("**Detected:** %s\n\n", time.Now().Format(time.RFC3339)))
-	sb.WriteString("## Logs\n\n")
-	sb.WriteString("```\n")
-	sb.WriteString(logs)
-	sb.WriteString("\n```\n\n")
-	sb.WriteString("## Instructions\n\n")
-	sb.WriteString("Analyze these logs, identify the root cause of the error, and implement a fix.\n")
-
-	savePath := filepath.Join(devCliDir, "last-error.md")
-	if err := os.WriteFile(savePath, []byte(sb.String()), 0644); err != nil {
-		return "", err
-	}
-
-	return savePath, nil
 }

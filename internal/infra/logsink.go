@@ -2,6 +2,7 @@ package infra
 
 import (
 	"bufio"
+	"dev-cli/internal/config"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -208,15 +209,15 @@ func (s *WriterLogSink) Close() error {
 	return nil
 }
 
-func CreateLogSink(config Config, containerName string) (LogSink, error) {
+func CreateLogSink(cfg *config.Config, containerName string) (LogSink, error) {
 	timestamp := time.Now().Format("20060102-150405")
 	filename := fmt.Sprintf("docker-%s-%s", containerName, timestamp)
 
 	var path string
-	if config.LogFormat == "jsonl" {
-		path = filepath.Join(config.DevlogsDir, filename+".jsonl")
+	if cfg.LogFormat == "jsonl" {
+		path = filepath.Join(cfg.LogDir, filename+".jsonl")
 		return NewJSONLLogSink(path)
 	}
-	path = filepath.Join(config.DevlogsDir, filename+".log")
+	path = filepath.Join(cfg.LogDir, filename+".log")
 	return NewFileLogSink(path)
 }

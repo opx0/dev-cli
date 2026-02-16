@@ -30,6 +30,23 @@ builds:
       - -X main.version={{.Version}}
       - -X main.commit={{.ShortCommit}}
       - -X main.date={{.Date}}
+  - id: dev-mcp
+    main: ./cmd/mcp/
+    binary: dev-mcp
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w
 
 archives:
   - id: default

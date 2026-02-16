@@ -1,14 +1,21 @@
 # dev-cli Makefile
 # Development tasks for linting, testing, and building
 
-.PHONY: all build test lint clean install
+.PHONY: all build build-mcp build-all test lint clean install
 
 # Default target
-all: lint test build
+all: lint test build-all
 
 # Build the CLI binary
 build:
 	go build -o dev-cli .
+
+# Build the MCP server binary
+build-mcp:
+	go build -o dev-mcp ./cmd/mcp/
+
+# Build both binaries
+build-all: build build-mcp
 
 # Run tests with race detection (important for sync.RWMutex in Registry)
 test:
@@ -29,12 +36,13 @@ install-lint:
 
 # Clean build artifacts
 clean:
-	rm -f dev-cli
+	rm -f dev-cli dev-mcp
 	go clean
 
-# Install the CLI locally
-install: build
+# Install both binaries locally
+install: build-all
 	cp dev-cli $(GOPATH)/bin/ 2>/dev/null || cp dev-cli ~/go/bin/
+	cp dev-mcp $(GOPATH)/bin/ 2>/dev/null || cp dev-mcp ~/go/bin/
 
 # Run integration tests only (requires Docker)
 test-integration:
@@ -46,3 +54,4 @@ check: lint test-short
 # Tidy dependencies
 tidy:
 	go mod tidy
+

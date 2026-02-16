@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"dev-cli/internal/ai"
+	"dev-cli/internal/llm"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -22,10 +22,10 @@ The agent will:
   dev-cli fix "kubectl can't connect to cluster"`,
 	Args: cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		ag := ai.NewAgent()
+		ag := llm.NewAgent()
 
 		err := ag.Resolve(args[0], func(proposal string) bool {
-			fmt.Printf("> Proposal: %s\n", proposal)
+			fmt.Printf("%s Proposal: %s\n", iconInfo(), proposal)
 			fmt.Print("  Allow? [y/N]: ")
 			var resp string
 			fmt.Scanln(&resp)
@@ -33,9 +33,9 @@ The agent will:
 		})
 
 		if err != nil {
-			fmt.Println("x Could not fix the issue.")
+			printError("Could not fix the issue.")
 		} else {
-			fmt.Println("+ Issue resolved.")
+			printSuccess("Issue resolved.")
 		}
 	},
 }
