@@ -53,6 +53,8 @@ type LogAnalysisResult struct {
 	Fix         string `json:"fix"`
 }
 
+// ── Response Cache ───────────────────────────────────────────────────────────
+
 type cacheEntry struct {
 	result    *ResearchResult
 	timestamp time.Time
@@ -143,9 +145,13 @@ func (c *ResponseCache) Clear() {
 	c.keys = make([]string, 0)
 }
 
+// ── HybridClient ─────────────────────────────────────────────────────────────
+
+// HybridClient routes requests between local (Ollama) and cloud (Perplexity)
+// providers, with response caching and automatic web-search detection.
 type HybridClient struct {
-	perplexity *PerplexityClient
-	ollama     *Client
+	perplexity *PerplexityProvider
+	ollama     *OllamaProvider
 	cache      *ResponseCache
 }
 
@@ -154,14 +160,35 @@ var defaultCache = NewResponseCache(50, 10*time.Minute)
 func NewHybridClient() *HybridClient {
 	cfg := config.Load()
 	return &HybridClient{
-		perplexity: NewPerplexityClient(cfg),
-		ollama:     NewClient(cfg),
+		perplexity: NewPerplexityProvider(cfg),
+		ollama:     NewOllamaProvider(cfg),
 		cache:      defaultCache,
 	}
 }
 
-func (h *HybridClient) Research(query string) (*ResearchResult, error) {
+// ChatCompletion routes a raw chat completion to the appropriate provider.
+// If the request targets a Perplexity model or web search is needed, uses Perplexity.
+// Otherwise falls back to Ollama.
+func (h *HybridClient) ChatCompletion(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
+	return h.ollama.ChatCompletion(ctx, req)
+}
 
+// Name returns the provider identifier.
+func (h *HybridClient) Name() string {
+	return "hybrid"
+}
+
+// LocalProvider returns the Ollama provider for direct access.
+func (h *HybridClient) LocalProvider() *OllamaProvider {
+	return h.ollama
+}
+
+// CloudProvider returns the Perplexity provider (may be nil).
+func (h *HybridClient) CloudProvider() *PerplexityProvider {
+	return h.perplexity
+}
+
+func (h *HybridClient) Research(query string) (*ResearchResult, error) {
 	if cached, ok := h.cache.Get(query); ok {
 		return cached, nil
 	}

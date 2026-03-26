@@ -3,6 +3,8 @@ package workflow
 import (
 	"fmt"
 	"strings"
+
+	"dev-cli/internal/executor"
 )
 
 // SafeMode controls whether remediation actions are executed or just previewed.
@@ -56,23 +58,9 @@ type PreviewAction struct {
 }
 
 // DefaultDestructivePatterns returns common dangerous command patterns.
+// This delegates to the canonical list in the executor package.
 func DefaultDestructivePatterns() []string {
-	return []string{
-		"rm -rf",
-		"rm -r /",
-		"dd if=",
-		"mkfs",
-		"> /dev/",
-		"chmod 777",
-		":(){ :|:& };:",
-		"drop database",
-		"drop table",
-		"truncate table",
-		"delete from",
-		"git reset --hard",
-		"git clean -fdx",
-		"docker system prune",
-	}
+	return executor.DangerousPatterns
 }
 
 // NewSafeModeContext creates a preview-only context by default.

@@ -1,15 +1,19 @@
 package llm
 
 import (
-	"bytes"
+	"context"
 	"dev-cli/internal/config"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os/exec"
 	"strings"
 	"time"
+
+	openai "github.com/openai/openai-go"
+	"github.com/openai/openai-go/option"
+	"github.com/openai/openai-go/packages/param"
+	"github.com/openai/openai-go/shared"
 )
 
 const (
@@ -19,8 +23,9 @@ const (
 	RequestTimeout   = 30 * time.Second
 )
 
-func EnsureOllamaRunning() error {
+// ── Docker Management (unchanged) ────────────────────────────────────────────
 
+func EnsureOllamaRunning() error {
 	client := &http.Client{Timeout: 2 * time.Second}
 	resp, err := client.Get(DefaultOllamaURL + "/api/tags")
 	if err == nil {
@@ -32,7 +37,6 @@ func EnsureOllamaRunning() error {
 
 	startCmd := exec.Command("docker", "start", "ollama")
 	if err := startCmd.Run(); err == nil {
-
 		return waitForOllama(client, 30*time.Second)
 	}
 
@@ -70,19 +74,37 @@ func waitForOllama(client *http.Client, timeout time.Duration) error {
 	}
 }
 
+// ── Response Types (kept for cmd/ compatibility) ─────────────────────────────
+
 type ExplainResult struct {
 	Explanation string `json:"explanation"`
 	Fix         string `json:"fix"`
 }
 
-type Client struct {
-	baseURL    string
-	model      string
-	cfg        *config.Config
-	httpClient *http.Client
+type CheatSheetResult struct {
+	Prerequisites []string        `json:"prerequisites"`
+	Commands      []CheatSheetCmd `json:"commands"`
 }
 
-func NewClient(cfg *config.Config) *Client {
+type CheatSheetCmd struct {
+	Command     string `json:"command"`
+	Description string `json:"description"`
+}
+
+// ── OllamaProvider ───────────────────────────────────────────────────────────
+
+// OllamaProvider implements the Provider interface using the OpenAI-compatible
+// API that Ollama serves at /v1/.
+type OllamaProvider struct {
+	client *openai.Client
+	model  string
+	cfg    *config.Config
+}
+
+var _ Provider = (*OllamaProvider)(nil)
+
+// NewOllamaProvider creates a new OllamaProvider backed by the openai-go SDK.
+func NewOllamaProvider(cfg *config.Config) *OllamaProvider {
 	baseURL := DefaultOllamaURL
 	if cfg.OllamaURL != "" {
 		baseURL = cfg.OllamaURL
@@ -93,30 +115,97 @@ func NewClient(cfg *config.Config) *Client {
 		model = cfg.OllamaModel
 	}
 
-	return &Client{
-		baseURL: baseURL,
-		model:   model,
-		cfg:     cfg,
-		httpClient: &http.Client{
-			Timeout: RequestTimeout,
-		},
+	// Ollama serves an OpenAI-compatible API at /v1/
+	client := openai.NewClient(
+		option.WithBaseURL(baseURL+"/v1/"),
+		option.WithAPIKey("ollama"), // Ollama ignores auth but the SDK requires a value
+		option.WithHTTPClient(&http.Client{Timeout: RequestTimeout}),
+	)
+
+	return &OllamaProvider{
+		client: &client,
+		model:  model,
+		cfg:    cfg,
 	}
 }
 
-type generateRequest struct {
-	Model     string `json:"model"`
-	Prompt    string `json:"prompt"`
-	Stream    bool   `json:"stream"`
-	Format    string `json:"format,omitempty"`
-	KeepAlive string `json:"keep_alive,omitempty"`
+func (p *OllamaProvider) Name() string { return "ollama" }
+
+// ChatCompletion sends a chat completion request through the OpenAI SDK to Ollama.
+func (p *OllamaProvider) ChatCompletion(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
+	// Build messages
+	messages := make([]openai.ChatCompletionMessageParamUnion, 0, len(req.Messages))
+	for _, msg := range req.Messages {
+		messages = append(messages, convertMessage(msg))
+	}
+
+	// Build params
+	params := openai.ChatCompletionNewParams{
+		Model:    shared.ChatModel(req.Model),
+		Messages: messages,
+	}
+
+	// Add tools if provided
+	if len(req.Tools) > 0 {
+		tools := make([]openai.ChatCompletionToolParam, 0, len(req.Tools))
+		for _, td := range req.Tools {
+			tools = append(tools, openai.ChatCompletionToolParam{
+				Function: shared.FunctionDefinitionParam{
+					Name:        td.Name,
+					Description: param.NewOpt(td.Description),
+					Parameters:  shared.FunctionParameters(td.Parameters),
+				},
+			})
+		}
+		params.Tools = tools
+	}
+
+	if req.Temperature != nil {
+		params.Temperature = param.NewOpt(*req.Temperature)
+	}
+
+	if req.MaxTokens != nil {
+		params.MaxCompletionTokens = param.NewOpt(*req.MaxTokens)
+	}
+
+	// Call the API
+	completion, err := p.client.Chat.Completions.New(ctx, params)
+	if err != nil {
+		return nil, fmt.Errorf("ollama chat completion: %w", err)
+	}
+
+	if len(completion.Choices) == 0 {
+		return nil, fmt.Errorf("ollama returned no choices")
+	}
+
+	choice := completion.Choices[0]
+
+	// Convert tool calls
+	var toolCalls []ToolCall
+	for _, tc := range choice.Message.ToolCalls {
+		toolCalls = append(toolCalls, ToolCall{
+			ID:        tc.ID,
+			Name:      tc.Function.Name,
+			Arguments: tc.Function.Arguments,
+		})
+	}
+
+	return &ChatResponse{
+		Content:      choice.Message.Content,
+		ToolCalls:    toolCalls,
+		FinishReason: choice.FinishReason,
+		Usage: Usage{
+			PromptTokens:     completion.Usage.PromptTokens,
+			CompletionTokens: completion.Usage.CompletionTokens,
+			TotalTokens:      completion.Usage.TotalTokens,
+		},
+	}, nil
 }
 
-type generateResponse struct {
-	Response string `json:"response"`
-	Done     bool   `json:"done"`
-}
+// ── Convenience Methods (for cmd/ backward compatibility) ────────────────────
 
-func (c *Client) Explain(cmd string, exitCode int, output string) (*ExplainResult, error) {
+// Explain analyzes a failed command and returns an explanation with optional fix.
+func (p *OllamaProvider) Explain(cmd string, exitCode int, output string) (*ExplainResult, error) {
 	if len(output) > 2000 {
 		output = output[len(output)-2000:]
 	}
@@ -141,40 +230,23 @@ Output: %s
 
 JSON response:`, cmd, exitCode, output)
 
-	req := generateRequest{
-		Model:  c.model,
-		Prompt: prompt,
-		Stream: false,
-		Format: "json",
+	messages := []Message{UserMsg(prompt)}
+	if p.cfg.OllamaUnload {
+		// Note: keep_alive is Ollama-specific and not supported via OpenAI API.
+		// The model will use Ollama's default keep_alive setting.
 	}
 
-	if c.cfg.OllamaUnload {
-		req.KeepAlive = "0m"
-	}
-
-	reqBody, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
-	}
-
-	resp, err := c.httpClient.Post(c.baseURL+"/api/generate", "application/json", bytes.NewReader(reqBody))
+	resp, err := p.ChatCompletion(context.Background(), ChatRequest{
+		Model:    p.model,
+		Messages: messages,
+		Format:   "json",
+	})
 	if err != nil {
 		return nil, fmt.Errorf("call Ollama: %w", err)
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("ollama status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var genResp generateResponse
-	if err := json.NewDecoder(resp.Body).Decode(&genResp); err != nil {
-		return nil, fmt.Errorf("decode response: %w", err)
-	}
 
 	var result ExplainResult
-	responseText := strings.TrimSpace(genResp.Response)
+	responseText := strings.TrimSpace(resp.Content)
 	if err := json.Unmarshal([]byte(responseText), &result); err != nil {
 		return &ExplainResult{Explanation: responseText, Fix: ""}, nil
 	}
@@ -182,7 +254,8 @@ JSON response:`, cmd, exitCode, output)
 	return &result, nil
 }
 
-func (c *Client) Research(query string) (*ResearchResult, error) {
+// Research provides step-by-step solutions for a query.
+func (p *OllamaProvider) Research(query string) (*ResearchResult, error) {
 	prompt := fmt.Sprintf(`You are a Senior Developer Assistant. The user needs to: "%s".
 Provide the TOP 3 distinct ways to achieve this.
 
@@ -209,40 +282,16 @@ OUTPUT JSON ONLY:
   ]
 }`, query)
 
-	req := generateRequest{
-		Model:  c.model,
-		Prompt: prompt,
-		Stream: false,
-		Format: "json",
-	}
-
-	if c.cfg.OllamaUnload {
-		req.KeepAlive = "0m"
-	}
-
-	reqBody, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
-	}
-
-	resp, err := c.httpClient.Post(c.baseURL+"/api/generate", "application/json", bytes.NewReader(reqBody))
+	resp, err := p.ChatCompletion(context.Background(), ChatRequest{
+		Model:    p.model,
+		Messages: []Message{UserMsg(prompt)},
+		Format:   "json",
+	})
 	if err != nil {
 		return nil, fmt.Errorf("call Ollama: %w", err)
 	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("ollama status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var genResp generateResponse
-	if err := json.NewDecoder(resp.Body).Decode(&genResp); err != nil {
-		return nil, fmt.Errorf("decode response: %w", err)
-	}
-
-	responseText := strings.TrimSpace(genResp.Response)
-
+	responseText := strings.TrimSpace(resp.Content)
 	var result ResearchResult
 	if err := json.Unmarshal([]byte(responseText), &result); err != nil {
 		return nil, fmt.Errorf("parse solutions: %w", err)
@@ -252,7 +301,8 @@ OUTPUT JSON ONLY:
 	return &result, nil
 }
 
-func (c *Client) AnalyzeLog(logLines string) (*LogAnalysisResult, error) {
+// AnalyzeLog identifies errors in log lines.
+func (p *OllamaProvider) AnalyzeLog(logLines string) (*LogAnalysisResult, error) {
 	prompt := fmt.Sprintf(`You are a Log Analyzer. Identify the error in these log lines.
 
 OUTPUT JSON ONLY:
@@ -264,40 +314,17 @@ OUTPUT JSON ONLY:
 LOGS:
 %s`, logLines)
 
-	req := generateRequest{
-		Model:  c.model,
-		Prompt: prompt,
-		Stream: false,
-		Format: "json",
-	}
-
-	if c.cfg.OllamaUnload {
-		req.KeepAlive = "0m"
-	}
-
-	reqBody, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
-	}
-
-	resp, err := c.httpClient.Post(c.baseURL+"/api/generate", "application/json", bytes.NewReader(reqBody))
+	resp, err := p.ChatCompletion(context.Background(), ChatRequest{
+		Model:    p.model,
+		Messages: []Message{UserMsg(prompt)},
+		Format:   "json",
+	})
 	if err != nil {
 		return nil, fmt.Errorf("call Ollama: %w", err)
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("ollama status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var genResp generateResponse
-	if err := json.NewDecoder(resp.Body).Decode(&genResp); err != nil {
-		return nil, fmt.Errorf("decode response: %w", err)
-	}
 
 	var result LogAnalysisResult
-	responseText := strings.TrimSpace(genResp.Response)
+	responseText := strings.TrimSpace(resp.Content)
 	if err := json.Unmarshal([]byte(responseText), &result); err != nil {
 		return &LogAnalysisResult{Explanation: responseText}, nil
 	}
@@ -305,7 +332,8 @@ LOGS:
 	return &result, nil
 }
 
-func (c *Client) Solve(goal string) (string, error) {
+// Solve generates a single shell command to achieve a goal.
+func (p *OllamaProvider) Solve(goal string) (string, error) {
 	prompt := fmt.Sprintf(`You are an Autonomous CLI Agent. The user wants to: "%s".
 Provide a SINGLE shell command to achieve this.
 
@@ -318,56 +346,19 @@ RULES:
 GOAL: %s
 COMMAND:`, goal, goal)
 
-	req := generateRequest{
-		Model:  c.model,
-		Prompt: prompt,
-		Stream: false,
-	}
-
-	if c.cfg.OllamaUnload {
-		req.KeepAlive = "0m"
-	}
-
-	reqBody, err := json.Marshal(req)
-	if err != nil {
-		return "", fmt.Errorf("marshal request: %w", err)
-	}
-
-	resp, err := c.httpClient.Post(c.baseURL+"/api/generate", "application/json", bytes.NewReader(reqBody))
+	resp, err := p.ChatCompletion(context.Background(), ChatRequest{
+		Model:    p.model,
+		Messages: []Message{UserMsg(prompt)},
+	})
 	if err != nil {
 		return "", fmt.Errorf("call Ollama: %w", err)
 	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("ollama status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var genResp generateResponse
-	if err := json.NewDecoder(resp.Body).Decode(&genResp); err != nil {
-		return "", fmt.Errorf("decode response: %w", err)
-	}
-
-	return strings.TrimSpace(genResp.Response), nil
+	return strings.TrimSpace(resp.Content), nil
 }
 
-// ── CheatSheet ───────────────────────────────────────────────────────────────
-
-// CheatSheetResult holds the prerequisites and commands returned by CheatSheet.
-type CheatSheetResult struct {
-	Prerequisites []string        `json:"prerequisites"`
-	Commands      []CheatSheetCmd `json:"commands"`
-}
-
-// CheatSheetCmd is a single command entry in a cheat sheet.
-type CheatSheetCmd struct {
-	Command     string `json:"command"`
-	Description string `json:"description"`
-}
-
-// CheatSheet generates a list of useful shell commands for the given tool/topic.
-func (c *Client) CheatSheet(tool, topic string, count int) (*CheatSheetResult, error) {
+// CheatSheet generates useful shell commands for a tool/topic.
+func (p *OllamaProvider) CheatSheet(tool, topic string, count int) (*CheatSheetResult, error) {
 	query := tool
 	if topic != "important and commonly used" {
 		query = tool + " " + topic
@@ -382,42 +373,18 @@ JSON format:
 
 Commands for "%s":`, count, query, query)
 
-	req := generateRequest{
-		Model:  c.model,
-		Prompt: prompt,
-		Stream: false,
-		Format: "json",
-	}
-
-	if c.cfg.OllamaUnload {
-		req.KeepAlive = "0m"
-	}
-
-	reqBody, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
-	}
-
-	resp, err := c.httpClient.Post(c.baseURL+"/api/generate", "application/json", bytes.NewReader(reqBody))
+	resp, err := p.ChatCompletion(context.Background(), ChatRequest{
+		Model:    p.model,
+		Messages: []Message{UserMsg(prompt)},
+		Format:   "json",
+	})
 	if err != nil {
 		return nil, fmt.Errorf("call Ollama: %w", err)
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("ollama status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var genResp generateResponse
-	if err := json.NewDecoder(resp.Body).Decode(&genResp); err != nil {
-		return nil, fmt.Errorf("decode response: %w", err)
-	}
 
 	var result CheatSheetResult
-	responseText := strings.TrimSpace(genResp.Response)
+	responseText := strings.TrimSpace(resp.Content)
 	if err := json.Unmarshal([]byte(responseText), &result); err != nil {
-		// If JSON parsing fails, return raw text as a single command entry
 		return &CheatSheetResult{
 			Commands: []CheatSheetCmd{{Command: responseText, Description: "raw response"}},
 		}, nil
@@ -426,79 +393,47 @@ Commands for "%s":`, count, query, query)
 	return &result, nil
 }
 
-// ToolCallResult represents the result of a tool-aware LLM generation.
-type ToolCallResult struct {
-	ToolName   string         `json:"tool_name"`
-	Parameters map[string]any `json:"parameters"`
-	Reasoning  string         `json:"reasoning,omitempty"`
+// ── Legacy Compatibility ─────────────────────────────────────────────────────
+
+// Client is a backward-compatible alias. New code should use OllamaProvider.
+type Client = OllamaProvider
+
+// NewClient creates a new OllamaProvider (backward-compatible name).
+func NewClient(cfg *config.Config) *OllamaProvider {
+	return NewOllamaProvider(cfg)
 }
 
-// GenerateWithTools calls the LLM with tool definitions and expects a tool call response.
-func (c *Client) GenerateWithTools(prompt string, toolSchemas string) (*ToolCallResult, error) {
-	systemPrompt := fmt.Sprintf(`You are an AI assistant with access to tools. Based on the user's request, determine which tool to use and with what parameters.
+// ── SDK Helpers ──────────────────────────────────────────────────────────────
 
-AVAILABLE TOOLS:
-%s
-
-RULES:
-1. Analyze the user's request carefully
-2. Select the most appropriate tool
-3. Determine the correct parameters
-4. Respond with ONLY valid JSON in this exact format:
-{
-  "tool_name": "name_of_tool",
-  "parameters": {
-    "param1": "value1",
-    "param2": "value2"
-  },
-  "reasoning": "brief explanation of why this tool was chosen"
-}
-
-Do NOT include any text outside the JSON object.`, toolSchemas)
-
-	fullPrompt := fmt.Sprintf(`%s
-
-USER REQUEST: %s
-
-JSON RESPONSE:`, systemPrompt, prompt)
-
-	req := generateRequest{
-		Model:  c.model,
-		Prompt: fullPrompt,
-		Stream: false,
-		Format: "json",
+// convertMessage converts our Message type to the openai SDK union type.
+func convertMessage(msg Message) openai.ChatCompletionMessageParamUnion {
+	switch msg.Role {
+	case "system":
+		return openai.SystemMessage(msg.Content)
+	case "user":
+		return openai.UserMessage(msg.Content)
+	case "assistant":
+		if len(msg.ToolCalls) > 0 {
+			sdkCalls := make([]openai.ChatCompletionMessageToolCallParam, len(msg.ToolCalls))
+			for i, tc := range msg.ToolCalls {
+				sdkCalls[i] = openai.ChatCompletionMessageToolCallParam{
+					ID: tc.ID,
+					Function: openai.ChatCompletionMessageToolCallFunctionParam{
+						Name:      tc.Name,
+						Arguments: tc.Arguments,
+					},
+				}
+			}
+			asstMsg := openai.AssistantMessage(msg.Content)
+			if asstMsg.OfAssistant != nil {
+				asstMsg.OfAssistant.ToolCalls = sdkCalls
+			}
+			return asstMsg
+		}
+		return openai.AssistantMessage(msg.Content)
+	case "tool":
+		return openai.ToolMessage(msg.Content, msg.ToolCallID)
+	default:
+		return openai.UserMessage(msg.Content)
 	}
-
-	if c.cfg.OllamaUnload {
-		req.KeepAlive = "0m"
-	}
-
-	reqBody, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
-	}
-
-	resp, err := c.httpClient.Post(c.baseURL+"/api/generate", "application/json", bytes.NewReader(reqBody))
-	if err != nil {
-		return nil, fmt.Errorf("call Ollama: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("ollama status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var genResp generateResponse
-	if err := json.NewDecoder(resp.Body).Decode(&genResp); err != nil {
-		return nil, fmt.Errorf("decode response: %w", err)
-	}
-
-	var result ToolCallResult
-	responseText := strings.TrimSpace(genResp.Response)
-	if err := json.Unmarshal([]byte(responseText), &result); err != nil {
-		return nil, fmt.Errorf("parse tool call: %w (response: %s)", err, responseText)
-	}
-
-	return &result, nil
 }

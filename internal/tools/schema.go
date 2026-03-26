@@ -122,3 +122,10 @@ func ParseToolCall(response string) (*ToolCallRequest, error) {
 	}
 	return &call, nil
 }
+
+// RegistryToToolDefs returns all tools from a Registry as ProviderToolDef slice.
+// This is an alias for RegistryToProviderToolDefs for cleaner imports.
+// The llm package consumes these and converts to its internal ToolDef type.
+func RegistryToToolDefs(r *Registry) []ProviderToolDef {
+	return RegistryToProviderToolDefs(r)
+}

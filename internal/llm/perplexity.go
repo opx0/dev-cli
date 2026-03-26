@@ -1,63 +1,129 @@
 package llm
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
 
 	"dev-cli/internal/config"
+
+	openai "github.com/openai/openai-go"
+	"github.com/openai/openai-go/option"
+	"github.com/openai/openai-go/packages/param"
+	"github.com/openai/openai-go/shared"
 )
 
 const (
-	PerplexityAPIURL = "https://api.perplexity.ai/chat/completions"
+	PerplexityAPIURL = "https://api.perplexity.ai"
 )
 
-type PerplexityClient struct {
-	apiKey     string
-	model      string
-	httpClient *http.Client
+// ── PerplexityProvider ───────────────────────────────────────────────────────
+
+// PerplexityProvider implements the Provider interface using Perplexity's
+// OpenAI-compatible chat completions API.
+type PerplexityProvider struct {
+	client *openai.Client
+	model  string
+	apiKey string
 }
 
-func NewPerplexityClient(cfg *config.Config) *PerplexityClient {
+var _ Provider = (*PerplexityProvider)(nil)
+
+// NewPerplexityProvider creates a new PerplexityProvider.
+// Returns nil if no API key is configured.
+func NewPerplexityProvider(cfg *config.Config) *PerplexityProvider {
 	if cfg.PerplexityKey == "" {
 		return nil
 	}
 
-	return &PerplexityClient{
-		apiKey: cfg.PerplexityKey,
+	client := openai.NewClient(
+		option.WithBaseURL(PerplexityAPIURL+"/"),
+		option.WithAPIKey(cfg.PerplexityKey),
+		option.WithHTTPClient(&http.Client{Timeout: 60 * time.Second}),
+	)
+
+	return &PerplexityProvider{
+		client: &client,
 		model:  cfg.PerplexityModel,
-		httpClient: &http.Client{
-			Timeout: 60 * time.Second,
-		},
+		apiKey: cfg.PerplexityKey,
 	}
 }
 
-type perplexityMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+func (p *PerplexityProvider) Name() string { return "perplexity" }
+
+// ChatCompletion sends a chat completion request through the OpenAI SDK to Perplexity.
+func (p *PerplexityProvider) ChatCompletion(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
+	messages := make([]openai.ChatCompletionMessageParamUnion, 0, len(req.Messages))
+	for _, msg := range req.Messages {
+		messages = append(messages, convertMessage(msg))
+	}
+
+	params := openai.ChatCompletionNewParams{
+		Model:    shared.ChatModel(req.Model),
+		Messages: messages,
+	}
+
+	if len(req.Tools) > 0 {
+		tools := make([]openai.ChatCompletionToolParam, 0, len(req.Tools))
+		for _, td := range req.Tools {
+			tools = append(tools, openai.ChatCompletionToolParam{
+				Function: shared.FunctionDefinitionParam{
+					Name:        td.Name,
+					Description: param.NewOpt(td.Description),
+					Parameters:  shared.FunctionParameters(td.Parameters),
+				},
+			})
+		}
+		params.Tools = tools
+	}
+
+	if req.Temperature != nil {
+		params.Temperature = param.NewOpt(*req.Temperature)
+	}
+
+	if req.MaxTokens != nil {
+		params.MaxCompletionTokens = param.NewOpt(*req.MaxTokens)
+	}
+
+	completion, err := p.client.Chat.Completions.New(ctx, params)
+	if err != nil {
+		return nil, fmt.Errorf("perplexity chat completion: %w", err)
+	}
+
+	if len(completion.Choices) == 0 {
+		return nil, fmt.Errorf("no response from Perplexity")
+	}
+
+	choice := completion.Choices[0]
+
+	var toolCalls []ToolCall
+	for _, tc := range choice.Message.ToolCalls {
+		toolCalls = append(toolCalls, ToolCall{
+			ID:        tc.ID,
+			Name:      tc.Function.Name,
+			Arguments: tc.Function.Arguments,
+		})
+	}
+
+	return &ChatResponse{
+		Content:      choice.Message.Content,
+		ToolCalls:    toolCalls,
+		FinishReason: choice.FinishReason,
+		Usage: Usage{
+			PromptTokens:     completion.Usage.PromptTokens,
+			CompletionTokens: completion.Usage.CompletionTokens,
+			TotalTokens:      completion.Usage.TotalTokens,
+		},
+	}, nil
 }
 
-type perplexityRequest struct {
-	Model    string              `json:"model"`
-	Messages []perplexityMessage `json:"messages"`
-}
+// ── Convenience Methods ──────────────────────────────────────────────────────
 
-type perplexityChoice struct {
-	Message struct {
-		Content string `json:"content"`
-	} `json:"message"`
-}
-
-type perplexityResponse struct {
-	Choices []perplexityChoice `json:"choices"`
-}
-
-func (c *PerplexityClient) Research(ctx context.Context, query string) (*ResearchResult, error) {
+// Research provides web-enhanced step-by-step solutions for a query.
+func (p *PerplexityProvider) Research(ctx context.Context, query string) (*ResearchResult, error) {
 	prompt := fmt.Sprintf(`You are a Senior Developer Assistant. The user needs to: "%s".
 Provide the TOP 3 distinct ways to achieve this.
 
@@ -87,46 +153,18 @@ OUTPUT JSON ONLY (No markdown, no code fences):
   ]
 }`, query)
 
-	reqBody, err := json.Marshal(perplexityRequest{
-		Model: c.model,
-		Messages: []perplexityMessage{
-			{Role: "system", Content: "You are a helpful developer assistant. Always respond with valid JSON only, no markdown formatting."},
-			{Role: "user", Content: prompt},
+	resp, err := p.ChatCompletion(ctx, ChatRequest{
+		Model: p.model,
+		Messages: []Message{
+			SystemMsg("You are a helpful developer assistant. Always respond with valid JSON only, no markdown formatting."),
+			UserMsg(prompt),
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
+		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", PerplexityAPIURL, bytes.NewReader(reqBody))
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("call Perplexity: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("perplexity status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var pResp perplexityResponse
-	if err := json.NewDecoder(resp.Body).Decode(&pResp); err != nil {
-		return nil, fmt.Errorf("decode response: %w", err)
-	}
-
-	if len(pResp.Choices) == 0 {
-		return nil, fmt.Errorf("no response from Perplexity")
-	}
-
-	content := strings.TrimSpace(pResp.Choices[0].Message.Content)
+	content := strings.TrimSpace(resp.Content)
 	content = stripMarkdownFences(content)
 
 	var result ResearchResult
@@ -138,18 +176,8 @@ OUTPUT JSON ONLY (No markdown, no code fences):
 	return &result, nil
 }
 
-func stripMarkdownFences(s string) string {
-	s = strings.TrimSpace(s)
-	if strings.HasPrefix(s, "```json") {
-		s = strings.TrimPrefix(s, "```json")
-	} else if strings.HasPrefix(s, "```") {
-		s = strings.TrimPrefix(s, "```")
-	}
-	s = strings.TrimSuffix(s, "```")
-	return strings.TrimSpace(s)
-}
-
-func (c *PerplexityClient) AnalyzeLog(ctx context.Context, logLines string) (*LogAnalysisResult, error) {
+// AnalyzeLog identifies errors in log lines using Perplexity's web-enhanced analysis.
+func (p *PerplexityProvider) AnalyzeLog(ctx context.Context, logLines string) (*LogAnalysisResult, error) {
 	prompt := fmt.Sprintf(`You are a Log Analyzer. Identify the error in these log lines.
 
 OUTPUT JSON ONLY (No markdown):
@@ -161,46 +189,18 @@ OUTPUT JSON ONLY (No markdown):
 LOGS:
 %s`, logLines)
 
-	reqBody, err := json.Marshal(perplexityRequest{
-		Model: c.model,
-		Messages: []perplexityMessage{
-			{Role: "system", Content: "You are a helpful developer assistant. Always respond with valid JSON only, no markdown formatting."},
-			{Role: "user", Content: prompt},
+	resp, err := p.ChatCompletion(ctx, ChatRequest{
+		Model: p.model,
+		Messages: []Message{
+			SystemMsg("You are a helpful developer assistant. Always respond with valid JSON only, no markdown formatting."),
+			UserMsg(prompt),
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
+		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", PerplexityAPIURL, bytes.NewReader(reqBody))
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("call Perplexity: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("perplexity status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var pResp perplexityResponse
-	if err := json.NewDecoder(resp.Body).Decode(&pResp); err != nil {
-		return nil, fmt.Errorf("decode response: %w", err)
-	}
-
-	if len(pResp.Choices) == 0 {
-		return nil, fmt.Errorf("no response from Perplexity")
-	}
-
-	content := strings.TrimSpace(pResp.Choices[0].Message.Content)
+	content := strings.TrimSpace(resp.Content)
 	content = stripMarkdownFences(content)
 
 	var result LogAnalysisResult
@@ -209,4 +209,27 @@ LOGS:
 	}
 
 	return &result, nil
+}
+
+// ── Legacy Compatibility ─────────────────────────────────────────────────────
+
+// PerplexityClient is a backward-compatible alias. New code should use PerplexityProvider.
+type PerplexityClient = PerplexityProvider
+
+// NewPerplexityClient creates a new PerplexityProvider (backward-compatible name).
+func NewPerplexityClient(cfg *config.Config) *PerplexityProvider {
+	return NewPerplexityProvider(cfg)
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+func stripMarkdownFences(s string) string {
+	s = strings.TrimSpace(s)
+	if strings.HasPrefix(s, "```json") {
+		s = strings.TrimPrefix(s, "```json")
+	} else if strings.HasPrefix(s, "```") {
+		s = strings.TrimPrefix(s, "```")
+	}
+	s = strings.TrimSuffix(s, "```")
+	return strings.TrimSpace(s)
 }

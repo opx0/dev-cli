@@ -1,40 +1,17 @@
 package llm
 
 import (
-	"dev-cli/internal/config"
-	"encoding/json"
-	"net/http"
 	"net/http/httptest"
 	"testing"
 )
 
 func TestAnalyzeLog_Parsing(t *testing.T) {
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Verify request format (input format check)
-		var req generateRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Errorf("Backend receive invalid JSON input: %v", err)
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-
-		resp := generateResponse{
-			Response: `{"explanation": "Root cause is a missing env var", "fix": "export DB_URL=..."}`,
-			Done:     true,
-		}
-		json.NewEncoder(w).Encode(resp)
-	}))
+	server := httptest.NewServer(chatCompletionHandler(t,
+		`{"explanation": "Root cause is a missing env var", "fix": "export DB_URL=..."}`))
 	defer server.Close()
 
-	client := &Client{
-		baseURL:    server.URL,
-		model:      "test-model",
-		cfg:        &config.Config{},
-		httpClient: server.Client(),
-	}
-
-	result, err := client.AnalyzeLog("Error: Connection failed")
+	provider := newTestOllamaProvider(server.URL)
+	result, err := provider.AnalyzeLog("Error: Connection failed")
 	if err != nil {
 		t.Fatalf("AnalyzeLog failed: %v", err)
 	}
@@ -48,24 +25,11 @@ func TestAnalyzeLog_Parsing(t *testing.T) {
 }
 
 func TestAnalyzeLog_MalformedJSON(t *testing.T) {
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := generateResponse{
-			Response: `This is not JSON`,
-			Done:     true,
-		}
-		json.NewEncoder(w).Encode(resp)
-	}))
+	server := httptest.NewServer(chatCompletionHandler(t, `This is not JSON`))
 	defer server.Close()
 
-	client := &Client{
-		baseURL:    server.URL,
-		model:      "test-model",
-		cfg:        &config.Config{},
-		httpClient: server.Client(),
-	}
-
-	result, err := client.AnalyzeLog("logs")
+	provider := newTestOllamaProvider(server.URL)
+	result, err := provider.AnalyzeLog("logs")
 	if err != nil {
 		t.Fatalf("Should not error on malformed JSON, just return text: %v", err)
 	}

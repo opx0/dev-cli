@@ -412,3 +412,180 @@ func (e *Engine) log(format string, args ...interface{}) {
 		fmt.Printf(format+"\n", args...)
 	}
 }
+
+// ── Agent Integration ────────────────────────────────────────────────────────
+
+// StepRequest represents a single tool execution request from the agent.
+type StepRequest struct {
+	ToolName   string         // Name of the tool to execute
+	Parameters map[string]any // Tool parameters
+	RunID      string         // Workflow run ID (for checkpoint association)
+}
+
+// StepResponse represents the outcome of a single tool execution.
+type StepResponse struct {
+	Success  bool   // Whether the tool succeeded
+	Output   string // Tool output (JSON serialized data or error)
+	Error    string // Error message if failed
+	StepID   string // Unique step ID for this execution
+	Blocked  bool   // True if blocked by safe mode
+	NeedsAck bool   // True if safe mode requires acknowledgment
+}
+
+// ExecuteToolStep runs a single tool invocation with checkpointing.
+// This is the primary entry point for the agent loop.
+//
+// Unlike ExecuteStep (for workflow Steps), this accepts a tool name and params
+// and handles safe mode checks, execution via the tools registry, and checkpointing.
+//
+// The executor func is provided by the caller (typically tools.Registry.Get(name).Execute).
+func (e *Engine) ExecuteToolStep(ctx context.Context, req StepRequest, executor func(ctx context.Context, params map[string]any) (success bool, output string, err error)) *StepResponse {
+	stepID := GenerateRunID() // Unique ID for this step
+
+	// Check safe mode for destructive operations
+	if e.safeCtx != nil && e.safeCtx.Mode == SafeModeExecute {
+		// Check if this is a destructive tool operation
+		if e.isDestructiveTool(req.ToolName, req.Parameters) {
+			// Use the approval function if set
+			if e.safeCtx.ApprovalFunc != nil {
+				action := fmt.Sprintf("Execute destructive tool: %s", req.ToolName)
+				if !e.safeCtx.RequireApproval(action) {
+					e.log("⚠ Safe mode: destructive tool %s denied by user", req.ToolName)
+					return &StepResponse{
+						Success:  false,
+						StepID:   stepID,
+						Blocked:  true,
+						NeedsAck: true,
+						Error:    fmt.Sprintf("safe mode: tool %s is destructive and was denied", req.ToolName),
+					}
+				}
+			}
+		}
+	} else if e.safeCtx != nil && e.safeCtx.IsPreview() {
+		// In preview mode, record but don't execute destructive tools
+		if e.isDestructiveTool(req.ToolName, req.Parameters) {
+			e.safeCtx.PreviewAction(stepID, fmt.Sprintf("Tool: %s", req.ToolName), fmt.Sprintf("params: %v", req.Parameters))
+			return &StepResponse{
+				Success:  false,
+				StepID:   stepID,
+				Blocked:  true,
+				NeedsAck: true,
+				Error:    fmt.Sprintf("preview mode: destructive tool %s would require approval", req.ToolName),
+			}
+		}
+	}
+
+	// Create step result for checkpointing
+	result := &StepResult{
+		StepID:    stepID,
+		Status:    StepRunning,
+		StartedAt: time.Now(),
+	}
+
+	// Save initial state if checkpointing is enabled
+	if e.store != nil && req.RunID != "" {
+		e.store.SaveStepResult(req.RunID, result)
+	}
+
+	e.log("▶ Executing tool: %s", req.ToolName)
+
+	// Execute the tool
+	success, output, err := executor(ctx, req.Parameters)
+
+	result.CompletedAt = time.Now()
+	result.Duration = result.CompletedAt.Sub(result.StartedAt)
+
+	if err != nil {
+		result.Status = StepFailed
+		result.Error = err.Error()
+		result.Output = output
+	} else if success {
+		result.Status = StepSuccess
+		result.Output = output
+		result.ExitCode = 0
+	} else {
+		result.Status = StepFailed
+		result.Output = output
+		result.ExitCode = 1
+	}
+
+	// Save final state
+	if e.store != nil && req.RunID != "" {
+		e.store.SaveStepResult(req.RunID, result)
+	}
+
+	// Publish event
+	e.publishEvent(pipeline.Event{
+		Type:      pipeline.EventType("workflow.tool_step"),
+		Timestamp: time.Now(),
+		Source:    "workflow",
+		BlockID:   stepID,
+		Data: map[string]interface{}{
+			"run_id":    req.RunID,
+			"step_id":   stepID,
+			"tool_name": req.ToolName,
+			"status":    string(result.Status),
+			"success":   success,
+		},
+	})
+
+	if success {
+		e.log("✓ Tool completed: %s", req.ToolName)
+	} else {
+		e.log("✗ Tool failed: %s", req.ToolName)
+	}
+
+	return &StepResponse{
+		Success: success,
+		Output:  output,
+		Error:   result.Error,
+		StepID:  stepID,
+		Blocked: false,
+	}
+}
+
+// isDestructiveTool checks if a tool with given params is destructive.
+func (e *Engine) isDestructiveTool(toolName string, params map[string]any) bool {
+	// Known destructive tools
+	destructiveTools := map[string]bool{
+		"write_file":  true,
+		"run_command": true, // Commands can be destructive
+	}
+
+	if destructiveTools[toolName] {
+		// For run_command, check the actual command for destructive patterns
+		if toolName == "run_command" {
+			if cmd, ok := params["command"].(string); ok {
+				return e.safeCtx != nil && e.safeCtx.isDestructive(cmd)
+			}
+		}
+		return true
+	}
+
+	return false
+}
+
+// AcknowledgeStep marks a blocked step as acknowledged, allowing it to proceed.
+// Returns the updated step response after execution.
+func (e *Engine) AcknowledgeStep(ctx context.Context, req StepRequest, executor func(ctx context.Context, params map[string]any) (success bool, output string, err error)) *StepResponse {
+	// Temporarily set to execute mode with auto-approve
+	originalMode := SafeModePreview
+	var originalApprovalFunc func(string) bool
+
+	if e.safeCtx != nil {
+		originalMode = e.safeCtx.Mode
+		originalApprovalFunc = e.safeCtx.ApprovalFunc
+		e.safeCtx.Mode = SafeModeExecute
+		e.safeCtx.ApprovalFunc = func(string) bool { return true } // Auto-approve
+	}
+
+	result := e.ExecuteToolStep(ctx, req, executor)
+
+	// Restore original settings
+	if e.safeCtx != nil {
+		e.safeCtx.Mode = originalMode
+		e.safeCtx.ApprovalFunc = originalApprovalFunc
+	}
+
+	return result
+}
