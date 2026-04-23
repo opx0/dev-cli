@@ -15,6 +15,23 @@ import (
 	"github.com/docker/docker/client"
 )
 
+// LogEntry represents a single log line with metadata.
+// Used for streaming container logs.
+type LogEntry struct {
+	Timestamp     time.Time               `json:"timestamp"`
+	Container     string                  `json:"container"`
+	Stream        string                  `json:"stream"`
+	Message       string                  `json:"message"`
+	GPUSnapshot   *GPUStats               `json:"gpu,omitempty"`
+	ContainerSnap *ContainerStatsSnapshot `json:"container_stats,omitempty"`
+}
+
+// LogSink is an interface for writing log entries.
+type LogSink interface {
+	Write(entry LogEntry) error
+	Close() error
+}
+
 type ContainerInfo struct {
 	ID      string
 	Name    string

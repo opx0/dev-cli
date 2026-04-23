@@ -179,6 +179,12 @@ func GetRunbooksForProject(db *sql.DB, projectID string) ([]Runbook, error) {
 	return results, nil
 }
 
+// DeleteRunbook removes a runbook by ID.
+func DeleteRunbook(db *sql.DB, id string) error {
+	_, err := db.Exec(`DELETE FROM runbooks WHERE id = ?`, id)
+	return err
+}
+
 // UpdateRunbookStats updates a runbook's success rate after execution.
 func UpdateRunbookStats(db *sql.DB, id string, success bool) error {
 

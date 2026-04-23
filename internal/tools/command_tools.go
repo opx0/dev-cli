@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"dev-cli/internal/executor"
@@ -30,6 +31,7 @@ type CommandResult struct {
 	ExitCode int    `json:"exit_code"`
 	Duration string `json:"duration"`
 	Cwd      string `json:"cwd,omitempty"`
+	Blocked  bool   `json:"blocked,omitempty"`
 }
 
 func (t *RunCommandTool) Execute(ctx context.Context, params map[string]any) ToolResult {
@@ -38,6 +40,12 @@ func (t *RunCommandTool) Execute(ctx context.Context, params map[string]any) Too
 	command := GetString(params, "command", "")
 	if command == "" {
 		return NewErrorResult("command is required", time.Since(start))
+	}
+
+	// Safety check: block dangerous commands
+	if check := executor.CheckCommandSafety(command); !check.IsSafe {
+		return NewErrorResult(fmt.Sprintf("BLOCKED: %s (matched pattern: '%s', severity: %s). This command could cause data loss or system damage.",
+			check.Reason, check.MatchedRule, check.Severity), time.Since(start))
 	}
 
 	timeout := GetDuration(params, "timeout", 60*time.Second)

@@ -139,12 +139,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case dockerHealthMsg:
 		m.agent = m.agent.SetDockerHealth(msg.health)
+		m.containers = m.containers.SetDockerHealth(msg.health)
 		m.containers = m.containers.SetServices(msg.health.Containers)
-		if msg.health.Available {
-			m.state = StateMain
-			if len(msg.health.Containers) > 0 {
-				cmds = append(cmds, fetchContainerLogs(msg.health.Containers[0].ID))
-			}
+		m.state = StateMain
+		if msg.health.Available && len(msg.health.Containers) > 0 {
+			cmds = append(cmds, fetchContainerLogs(msg.health.Containers[0].ID))
 		}
 
 	case containerLogsMsg:
@@ -155,12 +154,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case serviceHealthMsg:
 		_ = msg.services
+		m.state = StateMain
 
 	case historyLoadedMsg:
 		if msg.err == nil {
 			m.db = msg.db
 			m.history = m.history.SetHistory(msg.history)
 		}
+		m.state = StateMain
 
 	case starshipLineMsg:
 		m.agent = m.agent.SetStarshipLine(msg.line)

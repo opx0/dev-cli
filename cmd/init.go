@@ -16,16 +16,18 @@ var initCmd = &cobra.Command{
 	Short:     "Print shell integration script",
 	Aliases:   []string{"hook"},
 	Hidden:    true,
-	ValidArgs: []string{"zsh"},
+	ValidArgs: []string{"zsh", "bash"},
 	Args:      cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		shell := args[0]
 		switch shell {
 		case "zsh":
 			os.Stdout.WriteString(hook.ZshHook)
+		case "bash":
+			os.Stdout.WriteString(hook.BashHook)
 		default:
 			fmt.Fprintf(os.Stderr, "Unsupported shell: %s\n", shell)
-			fmt.Fprintln(os.Stderr, "Supported shells: zsh")
+			fmt.Fprintln(os.Stderr, "Supported shells: zsh, bash")
 			os.Exit(1)
 		}
 	},

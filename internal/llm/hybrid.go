@@ -147,12 +147,14 @@ func (c *ResponseCache) Clear() {
 
 // ── HybridClient ─────────────────────────────────────────────────────────────
 
-// HybridClient routes requests between local (Ollama) and cloud (Perplexity)
-// providers, with response caching and automatic web-search detection.
+// HybridClient routes requests between local (Ollama) and cloud (OpenAI-compatible,
+// Perplexity) providers, with response caching and automatic web-search detection.
 type HybridClient struct {
 	perplexity *PerplexityProvider
+	openai     *OpenAIProvider
 	ollama     *OllamaProvider
 	cache      *ResponseCache
+	cfg        *config.Config
 }
 
 var defaultCache = NewResponseCache(50, 10*time.Minute)
@@ -161,15 +163,34 @@ func NewHybridClient() *HybridClient {
 	cfg := config.Load()
 	return &HybridClient{
 		perplexity: NewPerplexityProvider(cfg),
+		openai:     NewOpenAIProvider(cfg),
 		ollama:     NewOllamaProvider(cfg),
 		cache:      defaultCache,
+		cfg:        cfg,
 	}
 }
 
-// ChatCompletion routes a raw chat completion to the appropriate provider.
-// If the request targets a Perplexity model or web search is needed, uses Perplexity.
-// Otherwise falls back to Ollama.
+// ChatCompletion routes a raw chat completion to the best provider:
+//   - Tool-calling requests prefer OpenAI (cloud) when available and !ForceLocalLLM
+//     — small local models frequently fail at function-call formatting.
+//   - Requests explicitly targeting a Perplexity sonar model go to Perplexity.
+//   - Everything else falls back to Ollama (local, no key required).
 func (h *HybridClient) ChatCompletion(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
+	useCloud := h.cfg != nil && !h.cfg.ForceLocalLLM
+
+	if useCloud && len(req.Tools) > 0 && h.openai != nil {
+		// For tool calls, swap the model to the cloud provider's configured default
+		// if the caller sent an Ollama-tag name (cloud APIs will reject it).
+		if h.cfg.OpenAIModel != "" && (req.Model == "" || req.Model == h.cfg.OllamaModel) {
+			req.Model = h.cfg.OpenAIModel
+		}
+		return h.openai.ChatCompletion(ctx, req)
+	}
+
+	if useCloud && strings.HasPrefix(strings.ToLower(req.Model), "sonar") && h.perplexity != nil {
+		return h.perplexity.ChatCompletion(ctx, req)
+	}
+
 	return h.ollama.ChatCompletion(ctx, req)
 }
 
@@ -240,6 +261,28 @@ func (h *HybridClient) AnalyzeLog(logLines string, aiMode string) (*LogAnalysisR
 
 func (h *HybridClient) Solve(goal string) (string, error) {
 	return h.ollama.Solve(goal)
+}
+
+// SelectAgentModel returns the (provider, model) pair that an agent loop
+// should use given the current config and a force-local override. The cloud
+// path is preferred for tool-using agents because small local models struggle
+// with reliable function-call formatting.
+func SelectAgentModel(cfg *config.Config, forceLocal bool) (provider, model string) {
+	if cfg == nil {
+		return "ollama", DefaultModel
+	}
+	if !forceLocal && !cfg.ForceLocalLLM && cfg.OpenAIKey != "" {
+		m := cfg.OpenAIModel
+		if m == "" {
+			m = "gpt-4o-mini"
+		}
+		return "openai", m
+	}
+	m := cfg.OllamaModel
+	if m == "" {
+		m = DefaultModel
+	}
+	return "ollama", m
 }
 
 func needsWebSearch(query string) bool {

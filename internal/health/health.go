@@ -3,6 +3,8 @@ package health
 
 import (
 	"context"
+	"dev-cli/internal/config"
+	"dev-cli/internal/llm"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -56,9 +58,61 @@ func AllChecks() []func() CheckResult {
 		CheckDockerCompose,
 		CheckOllama,
 		CheckOllamaModel,
+		CheckLLMProvider,
 		CheckGPU,
 		CheckDevlogsDir,
 		CheckNetwork,
+	}
+}
+
+// CheckLLMProvider verifies that at least one LLM provider is configured and
+// reachable — either Ollama (local) or an OpenAI-compatible cloud endpoint.
+// This is the check that tells a user "you can actually run `dev-cli fix`".
+func CheckLLMProvider() CheckResult {
+	cfg := config.Load()
+
+	ollamaURL := strings.TrimSuffix(cfg.OllamaURL, "/")
+	if ollamaURL == "" {
+		ollamaURL = "http://localhost:11434"
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	if resp, err := client.Get(ollamaURL + "/api/tags"); err == nil && resp != nil {
+		resp.Body.Close()
+		if resp.StatusCode == 200 {
+			return CheckResult{
+				Name:    "LLM Provider",
+				Status:  "ok",
+				Message: fmt.Sprintf("Ollama reachable at %s", ollamaURL),
+			}
+		}
+	}
+
+	if cfg.OpenAIKey != "" {
+		provider := llm.NewOpenAIProvider(cfg)
+		if provider != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := provider.Ping(ctx); err == nil {
+				return CheckResult{
+					Name:    "LLM Provider",
+					Status:  "ok",
+					Message: fmt.Sprintf("OpenAI-compatible endpoint reachable (%s)", cfg.OpenAIModel),
+				}
+			} else {
+				return CheckResult{
+					Name:    "LLM Provider",
+					Status:  "warn",
+					Message: fmt.Sprintf("OPENAI_API_KEY set but endpoint unreachable: %v", err),
+				}
+			}
+		}
+	}
+
+	return CheckResult{
+		Name:    "LLM Provider",
+		Status:  "fail",
+		Message: "No LLM provider available (no Ollama running, no OPENAI_API_KEY set)",
+		FixCmd:  "export OPENAI_API_KEY=… OR run: cd infra/ollama && docker compose up -d",
 	}
 }
 
@@ -159,8 +213,14 @@ func CheckDockerCompose() CheckResult {
 
 // CheckOllama verifies Ollama is running and accessible.
 func CheckOllama() CheckResult {
+	cfg := config.Load()
+	baseURL := strings.TrimSuffix(cfg.OllamaURL, "/")
+	if baseURL == "" {
+		baseURL = "http://localhost:11434"
+	}
+
 	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get("http://localhost:11434/api/tags")
+	resp, err := client.Get(baseURL + "/api/tags")
 
 	if err == nil && resp != nil {
 		defer resp.Body.Close()
@@ -168,7 +228,7 @@ func CheckOllama() CheckResult {
 			return CheckResult{
 				Name:    "Ollama",
 				Status:  "ok",
-				Message: "Running on localhost:11434",
+				Message: fmt.Sprintf("Running on %s", baseURL),
 			}
 		}
 	}
@@ -234,14 +294,25 @@ func CheckOllama() CheckResult {
 
 // CheckOllamaModel checks whether at least one model is installed in Ollama.
 func CheckOllamaModel() CheckResult {
+	cfg := config.Load()
+	baseURL := strings.TrimSuffix(cfg.OllamaURL, "/")
+	if baseURL == "" {
+		baseURL = "http://localhost:11434"
+	}
+
+	targetModel := cfg.OllamaModel
+	if targetModel == "" {
+		targetModel = "smallthinker"
+	}
+
 	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get("http://localhost:11434/api/tags")
+	resp, err := client.Get(baseURL + "/api/tags")
 
 	if err != nil {
 		return CheckResult{
 			Name:    "Ollama Model",
 			Status:  "warn",
-			Message: "Cannot check models - Ollama not running",
+			Message: fmt.Sprintf("Cannot check models - Ollama not running at %s", baseURL),
 		}
 	}
 	defer resp.Body.Close()
@@ -256,12 +327,32 @@ func CheckOllamaModel() CheckResult {
 			Name:    "Ollama Model",
 			Status:  "warn",
 			Message: "No models installed",
-			FixCmd:  "ollama pull llama3.2",
+			FixCmd:  fmt.Sprintf("ollama pull %s", targetModel),
 			FixFunc: func() error {
-				cmd := exec.Command("ollama", "pull", "llama3.2")
-				cmd.Stdout = os.Stdout
-				cmd.Stderr = os.Stderr
-				return cmd.Run()
+				return pullOllamaModel(cfg, targetModel)
+			},
+		}
+	}
+
+	target := strings.ToLower(targetModel)
+	hasTarget := false
+	available := make([]string, 0, len(tagsResp.Models))
+	for _, model := range tagsResp.Models {
+		available = append(available, model.Name)
+		name := strings.ToLower(model.Name)
+		if name == target || strings.HasPrefix(name, target+":") {
+			hasTarget = true
+		}
+	}
+
+	if !hasTarget {
+		return CheckResult{
+			Name:    "Ollama Model",
+			Status:  "warn",
+			Message: fmt.Sprintf("Configured model '%s' not found (available: %s)", targetModel, strings.Join(available, ", ")),
+			FixCmd:  fmt.Sprintf("ollama pull %s", targetModel),
+			FixFunc: func() error {
+				return pullOllamaModel(cfg, targetModel)
 			},
 		}
 	}
@@ -269,7 +360,7 @@ func CheckOllamaModel() CheckResult {
 	return CheckResult{
 		Name:    "Ollama Model",
 		Status:  "ok",
-		Message: fmt.Sprintf("Model(s) available (%s)", tagsResp.Models[0].Name),
+		Message: fmt.Sprintf("Configured model ready (%s)", targetModel),
 	}
 }
 
@@ -371,6 +462,19 @@ func getDockerComposeCmd() (string, []string) {
 		return "docker-compose", []string{}
 	}
 	return "docker", []string{"compose"}
+}
+
+// pullOllamaModel pulls a model via Ollama's HTTP API so doctor --fix works
+// even when the `ollama` CLI is not on PATH (e.g. Ollama running in Docker).
+func pullOllamaModel(cfg *config.Config, model string) error {
+	provider := llm.NewOllamaProvider(cfg)
+	if provider == nil {
+		return fmt.Errorf("cannot initialise Ollama provider")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	fmt.Fprintf(os.Stderr, "Pulling %s via Ollama API (this may take several minutes)…\n", model)
+	return provider.PullModel(ctx, model)
 }
 
 func runDockerCompose(composeFile string, args ...string) error {

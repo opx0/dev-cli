@@ -2,23 +2,18 @@
 
 **AI-Powered DevOps Terminal Companion**
 
-`dev-cli` is an autonomous AI agent for your terminal. It watches commands, explains failures, researches solutions, and can fix problems automatically using structured tool calling.
+`dev-cli` is an autonomous AI agent for your terminal. It explains failures, researches solutions, and can fix problems automatically using structured tool calling with **safe mode** protection.
 
 ```
                     ┌─────────────────────────────────────────┐
   Human Terminal    │              dev-cli                    │
-  ─────────────────►│  ask · explain · fix · watch · ui       │
+  ─────────────────►│       ask · explain · fix · ui          │
                     └──────────────────┬──────────────────────┘
                                        │
                     ┌──────────────────┴──────────────────────┐
                     │           internal/tools/               │
                     │  10 shared tools (file, git, docker...) │
-                    └──────────────────┬──────────────────────┘
-                                       │
-                    ┌──────────────────┴──────────────────────┐
-  AI Agents         │              dev-mcp                    │
-  (Cursor, Claude)  │     MCP Server for IDE integration      │
-  ─────────────────►└─────────────────────────────────────────┘
+                    └─────────────────────────────────────────┘
 ```
 
 ## Quick Start
@@ -28,7 +23,7 @@
 go build -o dev-cli . && sudo mv dev-cli /usr/local/bin/
 
 # Start Ollama (required for local AI)
-ollama run qwen2.5-coder:7b
+ollama run smallthinker
 
 # Shell integration (optional, enables auto-capture)
 echo 'eval "$(dev-cli init zsh)"' >> ~/.zshrc
@@ -92,32 +87,12 @@ dev-cli explain --since 1h           # Failures in last hour
 dev-cli explain -i                   # Interactive (run suggested fix)
 ```
 
-### `watch` — Log Monitor
-
-Monitor logs in real-time with AI-powered error detection.
-
-```bash
-dev-cli watch --file /var/log/app.log
-dev-cli watch --docker mycontainer
-dev-cli watch --docker myapp --ai cloud   # Use Perplexity
-```
-
 ### `ui` — Interactive Dashboard
 
 Launch the TUI for monitoring, history, and chat.
 
 ```bash
 dev-cli ui
-```
-
-### `workflow` — Multi-Step Automation
-
-Execute predefined workflows with checkpointing and rollback.
-
-```bash
-dev-cli workflow run deploy.yaml
-dev-cli workflow list
-dev-cli workflow resume <run-id>
 ```
 
 ### `doctor` — System Health Check
@@ -132,7 +107,7 @@ dev-cli doctor
 
 ## Available Tools
 
-The agent (`fix`) and MCP server (`dev-mcp`) share the same 10 tools:
+The `fix` agent uses 10 structured tools for safe, reliable execution:
 
 | Tool | Description |
 |------|-------------|
@@ -149,53 +124,12 @@ The agent (`fix`) and MCP server (`dev-mcp`) share the same 10 tools:
 
 ---
 
-## MCP Server (dev-mcp)
-
-`dev-mcp` exposes the same tools to AI-powered IDEs via the Model Context Protocol.
-
-### Build
-
-```bash
-go build -o dev-mcp ./cmd/mcp
-sudo mv dev-mcp /usr/local/bin/
-```
-
-### Configure Claude Desktop
-
-Add to `~/.config/claude/claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "dev-mcp": {
-      "command": "/usr/local/bin/dev-mcp"
-    }
-  }
-}
-```
-
-### Configure Cursor
-
-Add to Cursor settings:
-
-```json
-{
-  "mcp.servers": {
-    "dev-mcp": {
-      "command": "/usr/local/bin/dev-mcp"
-    }
-  }
-}
-```
-
----
-
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                         cmd/                                    │
-│  fix.go  ask.go  explain.go  watch.go  ui.go  workflow.go      │
+│         fix.go  ask.go  explain.go  ui.go  doctor.go            │
 └────────────────────────────┬────────────────────────────────────┘
                              │
 ┌────────────────────────────┴────────────────────────────────────┐
@@ -207,24 +141,22 @@ Add to Cursor settings:
                              │
 ┌────────────────────────────┴────────────────────────────────────┐
 │                     internal/tools/                             │
-│  Registry (10 tools) ◄── Used by Agent + MCP                   │
+│  Registry (10 tools) ◄── Used by Agent                          │
 │  Tool interface: Execute(ctx, params) → ToolResult              │
 └────────────────────────────┬────────────────────────────────────┘
                              │
-          ┌──────────────────┼──────────────────┐
-          ▼                  ▼                  ▼
-┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
-│ internal/       │ │ internal/       │ │ internal/       │
-│ workflow/       │ │ executor/       │ │ mcp/            │
-│ Engine,         │ │ Execute(),      │ │ MCP Server      │
-│ Checkpointing,  │ │ Safety checks   │ │ (stdio)         │
-│ Safe mode       │ │                 │ │                 │
-└─────────────────┘ └─────────────────┘ └─────────────────┘
+              ┌──────────────┴──────────────┐
+              ▼                             ▼
+┌─────────────────────────┐   ┌─────────────────────────┐
+│ internal/workflow/      │   │ internal/executor/      │
+│ Safe mode approval      │   │ Execute(),              │
+│ (--safe flag support)   │   │ Safety checks           │
+└─────────────────────────┘   └─────────────────────────┘
 ```
 
 ### Key Design Decisions
 
-1. **Unified Tool Registry**: Both CLI (`dev-cli fix`) and MCP (`dev-mcp`) use the exact same tools from `internal/tools/`
+1. **Unified Tool Registry**: CLI commands use shared tools from `internal/tools/`
 
 2. **Provider Interface**: All LLM backends implement `Provider.ChatCompletion()` using the OpenAI-compatible API via `openai-go` SDK
 
@@ -232,7 +164,7 @@ Add to Cursor settings:
 
 4. **Safe Mode**: Destructive operations require user approval; patterns defined in `executor/safety.go`
 
-5. **Workflow Integration**: Tool executions can route through `workflow.Engine` for checkpointing and rollback
+5. **Hybrid LLM**: Routes between local (Ollama) and cloud (Perplexity) based on task complexity
 
 ---
 
@@ -243,10 +175,24 @@ Add to Cursor settings:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `DEV_CLI_OLLAMA_URL` | Ollama API endpoint | `http://localhost:11434` |
-| `DEV_CLI_OLLAMA_MODEL` | Local model name | `qwen2.5-coder:7b` |
-| `DEV_CLI_PERPLEXITY_KEY` | Perplexity API key | (none) |
-| `DEV_CLI_PERPLEXITY_MODEL` | Cloud model name | `sonar-pro` |
-| `DEV_CLI_LOG_DIR` | Database directory | `~/.devlogs` |
+| `DEV_CLI_OLLAMA_MODEL` | Local model name | `smallthinker` |
+| `DEV_CLI_OPENAI_KEY` / `OPENAI_API_KEY` | OpenAI-compatible API key | (none) |
+| `DEV_CLI_OPENAI_URL` / `OPENAI_BASE_URL` | OpenAI-compatible base URL | `https://api.openai.com/v1/` |
+| `DEV_CLI_OPENAI_MODEL` / `OPENAI_MODEL` | Cloud model name | `gpt-4o-mini` |
+| `DEV_CLI_PERPLEXITY_KEY` / `PERPLEXITY_API_KEY` | Perplexity API key | (none) |
+| `DEV_CLI_PERPLEXITY_MODEL` | Perplexity model | `sonar-pro` |
+| `DEV_CLI_FORCE_LOCAL` | Force local (skip cloud) when set | (unset) |
+| `DEV_CLI_LOG_DIR` | Database directory | `~/.devlogs` (or `$XDG_DATA_HOME/dev-cli`) |
+
+### Provider routing
+
+`dev-cli fix` uses structured tool calling. Routing precedence:
+
+1. `OPENAI_API_KEY` set (any OpenAI-compatible endpoint — OpenAI, OpenRouter, Groq, Together, vLLM, …) **and** `DEV_CLI_FORCE_LOCAL` unset → cloud.
+2. Model name starts with `sonar*` and `PERPLEXITY_API_KEY` is set → Perplexity.
+3. Otherwise → Ollama (local, no key required).
+
+Small local models frequently mis-format function calls, so cloud is preferred when a tool-calling agent runs. Set `DEV_CLI_FORCE_LOCAL=1` to pin everything to Ollama.
 
 ### Config File
 
@@ -255,7 +201,12 @@ Add to Cursor settings:
 ```yaml
 ollama:
   url: http://localhost:11434
-  model: qwen2.5-coder:7b
+  model: smallthinker
+
+openai:
+  api_key: sk-xxxxx
+  base_url: https://api.openai.com/v1/
+  model: gpt-4o-mini
 
 perplexity:
   api_key: pplx-xxxxx
@@ -292,7 +243,6 @@ sqlite3 ~/.devlogs/history.db \
 ```bash
 # Build
 go build -o dev-cli .
-go build -o dev-mcp ./cmd/mcp
 
 # Test
 go test ./...
@@ -309,18 +259,16 @@ make check
 ```
 .
 ├── cmd/                    # CLI commands (cobra)
-│   ├── mcp/               # MCP server entrypoint
-│   └── *.go               # ask, explain, fix, watch, ui, workflow
+│   └── *.go               # ask, explain, fix, ui, doctor
 ├── internal/
 │   ├── config/            # Configuration loading
 │   ├── executor/          # Shell execution + safety
 │   ├── llm/               # LLM providers + Agent
-│   ├── mcp/               # MCP server implementation
 │   ├── pipeline/          # Event bus
 │   ├── storage/           # SQLite persistence
 │   ├── tools/             # Shared tool registry (10 tools)
 │   ├── tui/               # Terminal UI (bubbletea)
-│   └── workflow/          # Workflow engine + checkpointing
+│   └── workflow/          # Safe mode support
 ├── main.go                # CLI entrypoint
 └── go.mod
 ```

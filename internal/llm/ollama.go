@@ -1,10 +1,14 @@
 package llm
 
 import (
+	"bytes"
 	"context"
 	"dev-cli/internal/config"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"os/exec"
 	"strings"
@@ -18,9 +22,9 @@ import (
 
 const (
 	DefaultOllamaURL = "http://localhost:11434"
-	DefaultModel     = "qwen2.5-coder:3b-instruct"
-	FallbackModel    = "qwen2.5-coder:3b-instruct-q8_0"
-	RequestTimeout   = 30 * time.Second
+	DefaultModel     = "smallthinker"
+	FallbackModel    = "smallthinker"
+	RequestTimeout   = 5 * time.Minute
 )
 
 // ── Docker Management (unchanged) ────────────────────────────────────────────
@@ -96,9 +100,10 @@ type CheatSheetCmd struct {
 // OllamaProvider implements the Provider interface using the OpenAI-compatible
 // API that Ollama serves at /v1/.
 type OllamaProvider struct {
-	client *openai.Client
-	model  string
-	cfg    *config.Config
+	client  *openai.Client
+	model   string
+	baseURL string
+	cfg     *config.Config
 }
 
 var _ Provider = (*OllamaProvider)(nil)
@@ -123,9 +128,10 @@ func NewOllamaProvider(cfg *config.Config) *OllamaProvider {
 	)
 
 	return &OllamaProvider{
-		client: &client,
-		model:  model,
-		cfg:    cfg,
+		client:  &client,
+		model:   model,
+		baseURL: strings.TrimSuffix(baseURL, "/"),
+		cfg:     cfg,
 	}
 }
 
@@ -171,8 +177,26 @@ func (p *OllamaProvider) ChatCompletion(ctx context.Context, req ChatRequest) (*
 	// Call the API
 	completion, err := p.client.Chat.Completions.New(ctx, params)
 	if err != nil {
+		model := strings.TrimSpace(req.Model)
+		if model == "" {
+			model = p.model
+		}
+
+		if (isModelNotFoundError(err) || isRequestTimeoutError(err)) && model != "" {
+			if pullErr := p.PullModel(ctx, model); pullErr != nil {
+				return nil, fmt.Errorf("ollama model '%s' not found and auto-pull failed: %w", model, pullErr)
+			}
+
+			completion, err = p.client.Chat.Completions.New(ctx, params)
+			if err == nil {
+				goto completionReady
+			}
+		}
+
 		return nil, fmt.Errorf("ollama chat completion: %w", err)
 	}
+
+completionReady:
 
 	if len(completion.Choices) == 0 {
 		return nil, fmt.Errorf("ollama returned no choices")
@@ -200,6 +224,70 @@ func (p *OllamaProvider) ChatCompletion(ctx context.Context, req ChatRequest) (*
 			TotalTokens:      completion.Usage.TotalTokens,
 		},
 	}, nil
+}
+
+func isModelNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "model") &&
+		strings.Contains(msg, "not found")
+}
+
+func isRequestTimeoutError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "context deadline exceeded") ||
+		strings.Contains(msg, "client.timeout exceeded") ||
+		strings.Contains(msg, "timeout")
+}
+
+// PullModel downloads an Ollama model from the configured registry. Exported
+// so health checks / doctor --fix can trigger a pull when the configured model
+// is missing.
+func (p *OllamaProvider) PullModel(ctx context.Context, model string) error {
+	payload := struct {
+		Name   string `json:"name"`
+		Stream bool   `json:"stream"`
+	}{
+		Name:   model,
+		Stream: false,
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal pull request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+"/api/pull", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create pull request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Minute}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("pull model '%s': %w", model, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("pull model '%s' failed with status %d: %s", model, resp.StatusCode, strings.TrimSpace(string(errBody)))
+	}
+
+	return nil
 }
 
 // ── Convenience Methods (for cmd/ backward compatibility) ────────────────────

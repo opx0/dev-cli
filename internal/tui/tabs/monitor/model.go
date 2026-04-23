@@ -151,10 +151,11 @@ type Model struct {
 	viewport     viewport.Model
 
 	// Data
-	services       []infra.ContainerInfo
-	images         []infra.ImageInfo
-	logLines       []string
-	containerStats map[string]ContainerStats
+	services          []infra.ContainerInfo
+	images            []infra.ImageInfo
+	logLines          []string
+	containerStats    map[string]ContainerStats
+	dockerUnavailable string // non-empty when docker check failed; message for UI
 
 	// Log recording
 	isRecording   bool
@@ -243,6 +244,21 @@ func (m Model) SetServices(containers []infra.ContainerInfo) Model {
 	}
 	m.servicesList.SetItems(items)
 
+	return m
+}
+
+// SetDockerHealth records whether the Docker daemon is reachable so the panel
+// can show a clear "Docker unavailable" message instead of an empty services list.
+func (m Model) SetDockerHealth(h infra.DockerHealth) Model {
+	if h.Available {
+		m.dockerUnavailable = ""
+		return m
+	}
+	msg := "Docker unavailable"
+	if h.Error != nil {
+		msg = "Docker unavailable: " + h.Error.Error()
+	}
+	m.dockerUnavailable = msg
 	return m
 }
 

@@ -10,7 +10,7 @@ services:
       - OLLAMA_KEEP_ALIVE=24h
       - OLLAMA_HOST=0.0.0.0
     volumes:
-      - ollama_data:/root/.ollama
+      - ${OLLAMA_MODELS_PATH:-ollama_data}:/root/.ollama
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 30s
@@ -26,6 +26,18 @@ services:
     dns:
       - 8.8.8.8
       - 1.1.1.1
+    networks:
+      - dev-cli-net
+
+  ollama-model-init:
+    image: ollama/ollama:latest
+    restart: "no"
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      - OLLAMA_HOST=ollama:11434
+    command: ["sh", "-c", "ollama pull ${OLLAMA_MODEL:-smallthinker}"]
     networks:
       - dev-cli-net
 

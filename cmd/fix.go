@@ -4,8 +4,15 @@ import (
 	"context"
 	"fmt"
 
+	"database/sql"
+	"encoding/json"
+	"os"
+	"strings"
+
+	"dev-cli/internal/config"
 	"dev-cli/internal/llm"
 	"dev-cli/internal/pipeline"
+	"dev-cli/internal/storage"
 	"dev-cli/internal/tools"
 	"dev-cli/internal/workflow"
 
@@ -17,6 +24,7 @@ var (
 	fixSafeMode    bool
 	fixMaxIter     int
 	fixAutoApprove bool
+	fixDryRun      bool
 )
 
 var fixCmd = &cobra.Command{
@@ -47,11 +55,19 @@ func init() {
 	fixCmd.Flags().BoolVar(&fixSafeMode, "safe", true, "Enable safe mode (require approval for destructive tools)")
 	fixCmd.Flags().IntVar(&fixMaxIter, "max-iterations", 10, "Maximum tool-calling iterations")
 	fixCmd.Flags().BoolVar(&fixAutoApprove, "auto-approve", false, "Auto-approve all tool calls (dangerous)")
+	fixCmd.Flags().BoolVar(&fixDryRun, "dry-run", false, "Preview actions without executing (safe for exploration)")
 	rootCmd.AddCommand(fixCmd)
 }
 
 func runFix(cmd *cobra.Command, args []string) {
 	issue := args[0]
+	cfg := config.Load()
+	providerName, model := llm.SelectAgentModel(cfg, false)
+
+	// Dry-run mode announcement
+	if fixDryRun {
+		fmt.Printf("%s DRY-RUN MODE: No changes will be made\n\n", iconWarn())
+	}
 
 	// Create tool registry
 	registry := tools.GetRegistry()
@@ -63,7 +79,11 @@ func runFix(cmd *cobra.Command, args []string) {
 	engine.SetVerbose(fixVerbose)
 
 	// Configure safe mode
-	if fixSafeMode && !fixAutoApprove {
+	if fixDryRun {
+		// Dry-run mode - preview only, no execution
+		safeCtx := workflow.NewSafeModeContext() // Preview mode by default
+		engine.SetSafeMode(safeCtx)
+	} else if fixSafeMode && !fixAutoApprove {
 		safeCtx := workflow.NewExecuteContext(func(action string) bool {
 			fmt.Printf("\n%s %s\n", iconWarn(), action)
 			fmt.Print("  Allow? [y/N]: ")
@@ -85,14 +105,34 @@ func runFix(cmd *cobra.Command, args []string) {
 		engine,
 	)
 
+	// Wire persistent store for runbook learning (best-effort; runs without if unavailable).
+	if db, err := storage.InitDB(); err == nil {
+		agent.SetDB(db)
+	}
+
 	// Configure agent
 	agent.SetConfig(llm.AgentConfig{
 		MaxIterations: fixMaxIter,
-		Model:         llm.DefaultModel,
+		Model:         model,
 		Verbose:       fixVerbose,
+		DryRun:        fixDryRun,
 		ApprovalFunc: func(toolName string, params map[string]any) bool {
 			if fixAutoApprove {
 				return true
+			}
+			if fixDryRun {
+				// In dry-run, show what would happen but don't actually prompt
+				fmt.Printf("\n%s [DRY-RUN] Would execute: %s\n", iconInfo(), toolName)
+				if toolName == "run_command" {
+					if cmdStr, ok := params["command"].(string); ok {
+						fmt.Printf("  Command: %s\n", cmdStr)
+					}
+				} else if toolName == "write_file" {
+					if path, ok := params["path"].(string); ok {
+						fmt.Printf("  File: %s\n", path)
+					}
+				}
+				return false // Don't actually execute in dry-run
 			}
 			// Only prompt for potentially destructive tools
 			if toolName == "write_file" || toolName == "run_command" {
@@ -115,10 +155,29 @@ func runFix(cmd *cobra.Command, args []string) {
 		},
 	})
 
-	// Run the agent
-	fmt.Printf("%s Analyzing: %s\n", iconInfo(), issue)
-
 	ctx := context.Background()
+
+	// Runbook replay: if we've resolved the same issue for this project before
+	// and it succeeded, offer to re-run the saved steps without calling the LLM.
+	if !fixDryRun {
+		if db, err := storage.InitDB(); err == nil {
+			if rb := findReplayableRunbook(db, issue); rb != nil {
+				if promptReplayRunbook(rb, fixAutoApprove) {
+					printInfo(fmt.Sprintf("Replaying runbook %q (%d steps)", rb.Name, len(rb.Steps)))
+					if replayRunbook(ctx, engine, registry, rb) {
+						printSuccess("Replay succeeded")
+						_ = storage.UpdateRunbookStats(db, rb.ID, true)
+						return
+					}
+					_ = storage.UpdateRunbookStats(db, rb.ID, false)
+					printWarning("Replay failed, falling back to agent")
+				}
+			}
+		}
+	}
+
+	// Run the agent
+	fmt.Printf("%s Analyzing (%s/%s): %s\n", iconInfo(), providerName, model, issue)
 	result, err := agent.Resolve(ctx, issue)
 
 	if err != nil {
@@ -128,7 +187,12 @@ func runFix(cmd *cobra.Command, args []string) {
 
 	// Print summary
 	fmt.Println()
-	if result.Success {
+	if fixDryRun {
+		fmt.Printf("%s Dry-run complete. Actions that would be taken:\n", iconInfo())
+		if result.Summary != "" {
+			fmt.Printf("\n%s\n", result.Summary)
+		}
+	} else if result.Success {
 		printSuccess("Issue resolved!")
 		if result.Summary != "" {
 			fmt.Printf("\n%s Summary:\n%s\n", iconInfo(), result.Summary)
@@ -145,7 +209,94 @@ func runFix(cmd *cobra.Command, args []string) {
 			if !tc.Success {
 				status = iconFail()
 			}
+			if fixDryRun {
+				status = "[DRY-RUN]"
+			}
 			fmt.Printf("  %d. %s %s (%v)\n", i+1, status, tc.ToolName, tc.Duration)
 		}
 	}
+}
+
+// findReplayableRunbook returns a high-confidence runbook for the current
+// project whose recorded issue matches the requested one. Matching is a
+// case-insensitive exact or substring match against runbook name/description.
+func findReplayableRunbook(db *sql.DB, issue string) *storage.Runbook {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil
+	}
+	projectID, _, _ := storage.DetectProjectFingerprintID(cwd)
+	runbooks, err := storage.GetRunbooksForProject(db, projectID)
+	if err != nil {
+		return nil
+	}
+	needle := strings.ToLower(strings.TrimSpace(issue))
+	for i := range runbooks {
+		rb := &runbooks[i]
+		if rb.SuccessRate < 0.7 {
+			continue
+		}
+		hay := strings.ToLower(rb.Description + " " + rb.Name)
+		if strings.Contains(hay, needle) || strings.Contains(needle, strings.ToLower(rb.Description)) {
+			return rb
+		}
+	}
+	return nil
+}
+
+// promptReplayRunbook asks the user whether to replay a matched runbook. Auto-approve
+// accepts without prompting.
+func promptReplayRunbook(rb *storage.Runbook, autoApprove bool) bool {
+	fmt.Printf("\n%s Found cached runbook: %s\n", iconInfo(), rb.Name)
+	fmt.Printf("  Steps: %d, success rate: %.0f%%, used: %dx\n", len(rb.Steps), rb.SuccessRate*100, rb.UsageCount)
+	for i, s := range rb.Steps {
+		fmt.Printf("  %d. %s  %s\n", i+1, s.Name, truncate(s.Command, 80))
+	}
+	if autoApprove {
+		return true
+	}
+	fmt.Print("Replay this known fix? [Y/n]: ")
+	var resp string
+	fmt.Scanln(&resp)
+	r := strings.TrimSpace(strings.ToLower(resp))
+	return r == "" || r == "y" || r == "yes"
+}
+
+// replayRunbook executes each stored step against the tool registry via the
+// workflow engine. Returns true when all steps succeed.
+func replayRunbook(ctx context.Context, engine *workflow.Engine, registry *tools.Registry, rb *storage.Runbook) bool {
+	for _, s := range rb.Steps {
+		tool, ok := registry.Get(s.Name)
+		if !ok {
+			printError(fmt.Sprintf("replay: unknown tool %q (runbook is stale)", s.Name))
+			return false
+		}
+		var params map[string]any
+		if err := json.Unmarshal([]byte(s.Command), &params); err != nil {
+			printError(fmt.Sprintf("replay: malformed params for step %s: %v", s.Name, err))
+			return false
+		}
+		resp := engine.ExecuteToolStep(ctx, workflow.StepRequest{
+			ToolName:   s.Name,
+			Parameters: params,
+		}, func(ctx context.Context, p map[string]any) (bool, string, error) {
+			r := tool.Execute(ctx, p)
+			if r.Success {
+				return true, r.Error, nil
+			}
+			return false, r.Error, fmt.Errorf("%s", r.Error)
+		})
+		if !resp.Success {
+			printError(fmt.Sprintf("replay: step %s failed: %s", s.Name, resp.Error))
+			return false
+		}
+	}
+	return true
+}
+
+func truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max-1] + "…"
 }

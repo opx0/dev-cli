@@ -74,12 +74,18 @@ func (m Model) renderServicesPanel(width, height int) string {
 	var content strings.Builder
 	content.WriteString(header + "\n")
 
-	if len(m.services) == 0 {
+	switch {
+	case m.dockerUnavailable != "":
+		msg := lipgloss.NewStyle().
+			Foreground(theme.Red).
+			Render(m.dockerUnavailable)
+		content.WriteString(msg)
+	case len(m.services) == 0:
 		noItems := lipgloss.NewStyle().
 			Foreground(theme.Overlay0).
 			Render("No services running")
 		content.WriteString(noItems)
-	} else {
+	default:
 		content.WriteString(m.servicesList.View())
 	}
 

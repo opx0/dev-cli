@@ -197,7 +197,7 @@ http {
         listen 11434;
         location /api/tags {
             default_type application/json;
-            return 200 '{"models":[{"name":"qwen2.5-coder:3b-instruct","modified_at":"2024-01-01T00:00:00Z","size":1234567890,"digest":"abc123"}]}';
+            return 200 '{"models":[{"name":"smallthinker","modified_at":"2024-01-01T00:00:00Z","size":1234567890,"digest":"abc123"}]}';
         }
     }
 }
@@ -254,17 +254,17 @@ http {
 		t.Errorf("expected 1 model, got %d", len(models))
 	}
 
-	if len(models) > 0 && models[0].Name != "qwen2.5-coder:3b-instruct" {
-		t.Errorf("expected model name 'qwen2.5-coder:3b-instruct', got '%s'", models[0].Name)
+	if len(models) > 0 && models[0].Name != "smallthinker" {
+		t.Errorf("expected model name 'smallthinker', got '%s'", models[0].Name)
 	}
 
-	hasModel, err := ollamaClient.HasModel(ctx, "qwen2.5-coder")
+	hasModel, err := ollamaClient.HasModel(ctx, "smallthinker")
 	if err != nil {
 		t.Fatalf("has model failed: %v", err)
 	}
 
 	if !hasModel {
-		t.Error("expected HasModel to return true for 'qwen2.5-coder'")
+		t.Error("expected HasModel to return true for 'smallthinker'")
 	}
 
 	hasModel, err = ollamaClient.HasModel(ctx, "nonexistent-model")

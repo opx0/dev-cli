@@ -15,8 +15,11 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.25'
           cache: true
+
+      - name: go vet
+        run: go vet ./...
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v4
@@ -33,8 +36,11 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.25'
           cache: true
+
+      - name: go vet
+        run: go vet ./...
 
       - name: Run tests
         run: go test -v -race -coverprofile=coverage.out ./...
@@ -62,10 +68,10 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.25'
           cache: true
 
-      - name: Build
+      - name: Build dev-cli
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
@@ -75,6 +81,17 @@ jobs:
             binary_name="${binary_name}.exe"
           fi
           go build -o "dist/${GOOS}-${GOARCH}/${binary_name}" .
+
+      - name: Build dev-mcp
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          binary_name="dev-mcp"
+          if [ "$GOOS" = "windows" ]; then
+            binary_name="${binary_name}.exe"
+          fi
+          go build -o "dist/${GOOS}-${GOARCH}/${binary_name}" ./cmd/mcp/
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

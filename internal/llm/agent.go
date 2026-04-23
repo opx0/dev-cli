@@ -3,11 +3,14 @@ package llm
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
+	"dev-cli/internal/storage"
 	"dev-cli/internal/tools"
 	"dev-cli/internal/workflow"
 
@@ -31,6 +34,9 @@ type AgentConfig struct {
 
 	// Verbose enables detailed logging.
 	Verbose bool
+
+	// DryRun enables preview mode (no actual execution).
+	DryRun bool
 
 	// ApprovalFunc is called before executing destructive tools.
 	// Returns true to proceed, false to skip.
@@ -56,7 +62,12 @@ type Agent struct {
 	registry *tools.Registry
 	engine   *workflow.Engine
 	config   AgentConfig
+	db       *sql.DB // optional: when set, successful runs are recorded as runbooks
 }
+
+// SetDB wires a persistent store for runbook learning. When set, Resolve /
+// Run will record successful agent sessions via storage.RecordRunbookFromAgent.
+func (a *Agent) SetDB(db *sql.DB) { a.db = db }
 
 // NewAgent creates a new agent with the default provider and tool registry.
 func NewAgent() *Agent {
@@ -161,6 +172,7 @@ func (a *Agent) Run(ctx context.Context, task string, systemPrompt string) (*Age
 			result.Success = true
 			result.Summary = resp.Content
 			a.log("✓ Task completed")
+			a.recordRunbook(task, result)
 			return result, nil
 		}
 
@@ -345,6 +357,41 @@ Be methodical and thorough. If you're unsure, gather more information before mak
 func (a *Agent) log(format string, args ...interface{}) {
 	if a.config.Verbose {
 		fmt.Printf(format+"\n", args...)
+	}
+}
+
+// recordRunbook persists a learned runbook on successful resolution. Only
+// actual successful tool calls contribute steps — denied/failed/dry-run
+// entries are filtered out. No-op when no DB is wired or the run had no
+// successful side-effects worth replaying.
+func (a *Agent) recordRunbook(task string, result *AgentResult) {
+	if a.db == nil || !result.Success || a.config.DryRun {
+		return
+	}
+	steps := make([]storage.RecordedRunbookStep, 0, len(result.ToolCalls))
+	for _, tc := range result.ToolCalls {
+		if !tc.Success {
+			continue
+		}
+		paramsJSON, err := json.Marshal(tc.Parameters)
+		if err != nil {
+			continue
+		}
+		steps = append(steps, storage.RecordedRunbookStep{
+			ToolName:    tc.ToolName,
+			Parameters:  string(paramsJSON),
+			Description: task,
+		})
+	}
+	if len(steps) == 0 {
+		return
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		cwd = "."
+	}
+	if _, err := storage.RecordRunbookFromAgent(a.db, cwd, task, steps); err != nil && a.config.Verbose {
+		fmt.Printf("  ⚠ could not record runbook: %v\n", err)
 	}
 }
 

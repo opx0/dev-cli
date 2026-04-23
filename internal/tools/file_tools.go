@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"dev-cli/internal/executor"
 )
 
 // ReadFileTool reads file contents.
@@ -53,6 +55,12 @@ func (t *ReadFileTool) Execute(ctx context.Context, params map[string]any) ToolR
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return NewErrorResult(fmt.Sprintf("invalid path: %v", err), time.Since(start))
+	}
+
+	// Safety check: block reads of sensitive files
+	if check := executor.CheckFileSafety(absPath); !check.IsSafe {
+		return NewErrorResult(fmt.Sprintf("BLOCKED: %s (matched: %s). This file may contain secrets or sensitive data.",
+			check.Reason, check.MatchedRule), time.Since(start))
 	}
 
 	info, err := os.Stat(absPath)
@@ -172,6 +180,12 @@ func (t *WriteFileTool) Execute(ctx context.Context, params map[string]any) Tool
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return NewErrorResult(fmt.Sprintf("invalid path: %v", err), time.Since(start))
+	}
+
+	// Safety check: block writes to sensitive files
+	if check := executor.CheckFileSafety(absPath); !check.IsSafe {
+		return NewErrorResult(fmt.Sprintf("BLOCKED: %s (matched: %s). This file may contain secrets or sensitive data.",
+			check.Reason, check.MatchedRule), time.Since(start))
 	}
 
 	_, err = os.Stat(absPath)
