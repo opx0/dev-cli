@@ -105,6 +105,33 @@ History:        .bash_history, .zsh_history, .mysql_history
 **Tests Added:**
 - `internal/executor/safety_test.go` - 150 lines, 42 test cases
 
+### Phase 3: Local-First Excellence (COMPLETED)
+
+**New `cmd/models.go`:**
+- `dev-cli models list` — List installed Ollama models with sizes
+- `dev-cli models pull <model>` — Pull with live progress bar
+- `dev-cli models rm <model>` — Remove via Ollama API
+
+**Improved Ollama Provider (`internal/llm/ollama.go`):**
+- `CheckOllamaStatus()` — Non-destructive probe for offline indicators
+- `PullModel()` now streams download progress to terminal
+- Better error messages with actionable fix suggestions
+- Auto-recovery: detects Docker issues, stale containers, missing models
+
+**Improved Ollama Client (`internal/infra/ollama.go`):**
+- Added `DeleteModel()` method
+
+**Offline Mode Indicator:**
+- `ask`, `explain`, `fix` commands now show `[⚡ local]` or `[☁ cloud]` badge
+
+**Infrastructure:**
+- `setup.sh` — One-command bootstrap (Docker + Compose + NVIDIA + Ollama)
+- `make setup` / `make ollama-up` / `make ollama-down` targets
+- Docker integration tests skip gracefully when Docker is offline
+
+**Documentation:**
+- `docs/MODELS.md` — GPU compatibility guide for RTX 3050, model recommendations
+
 ---
 
 ## Current Project State
@@ -191,18 +218,17 @@ dev-cli/
 
 ## What's Next (Roadmap)
 
-### Phase 1.3: Local-First Excellence (NEXT)
-**Priority: HIGH** (Score: 8/9)
+### Phase 1.3: Local-First Excellence (COMPLETED)
 
 Tasks:
-- [ ] Improve Ollama error messages and recovery
-- [ ] Add model auto-download if not present
-- [ ] Add `dev-cli models` command to list/pull models
-- [ ] Test with multiple models (qwen2.5-coder, codellama, deepseek-coder)
-- [ ] Add offline mode indicator in output
-- [ ] Document recommended models for different tasks
+- [x] Improve Ollama error messages and recovery
+- [x] Add model auto-download if not present
+- [x] Add `dev-cli models` command to list/pull/rm models
+- [x] Test with multiple models (documented in MODELS.md)
+- [x] Add offline mode indicator in output
+- [x] Document recommended models for different tasks
 
-### Phase 2: Differentiation (2-4 weeks)
+### Phase 2: Differentiation (NEXT)
 
 **2.1 Explain Enhancement:**
 - [ ] Add `--context` flag for surrounding commands

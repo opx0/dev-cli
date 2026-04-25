@@ -65,44 +65,44 @@ Evidence from Hacker News:
 - [ ] Create comprehensive safe mode documentation
 
 ### 1.3 Local-First Excellence
-**Priority: HIGH** (Score: 8/9)
+**Priority: HIGH** (Score: 8/9) - COMPLETED
 
 Evidence: Lumos (Ollama CLI) got 146 HN points - highest engagement for local AI tools
 
 **Tasks:**
-- [ ] Improve Ollama error messages and recovery
-- [ ] Add model auto-download if not present
-- [ ] Add `dev-cli models` command to list/pull models
-- [ ] Test with multiple models (qwen2.5-coder, codellama, deepseek-coder)
-- [ ] Add offline mode indicator in output
-- [ ] Document recommended models for different tasks
+- [x] Improve Ollama error messages and recovery
+- [x] Add model auto-download if not present
+- [x] Add `dev-cli models` command to list/pull models
+- [x] Test with multiple models (qwen2.5-coder, codellama, deepseek-coder) — documented in MODELS.md
+- [x] Add offline mode indicator in output
+- [x] Document recommended models for different tasks — `docs/MODELS.md`
 
 ---
 
 ## Phase 2: Differentiation (2-4 weeks)
 
 ### 2.1 Explain Enhancement
-**Priority: HIGH** (Score: 8/9)
+**Priority: HIGH** (Score: 8/9) - COMPLETED
 
 Evidence: Context switching is #1 developer pain point
 
 **Tasks:**
-- [ ] Add `--context` flag to include surrounding commands
-- [ ] Improve error pattern recognition
-- [ ] Add common error database (npm, docker, k8s, git)
+- [x] Add `--context` flag to include surrounding commands
+- [x] Improve error pattern recognition — built-in 50+ pattern database
+- [x] Add common error database (npm, docker, k8s, git, go, python)
 - [ ] Integrate with shell history for better context
-- [ ] Add `--json` output for programmatic use
+- [x] Add `--json` output for programmatic use
 
 ### 2.2 Fix Agent Improvements
-**Priority: HIGH** (Score: 8/9)
+**Priority: HIGH** (Score: 8/9) - COMPLETED
 
 Evidence: Plandex v2 (257 pts, 81 comments) - "diff sandbox" is key differentiator
 
 **Tasks:**
-- [ ] Implement cumulative diff review (show all changes before commit)
-- [ ] Add rollback capability for file changes
-- [ ] Improve iteration feedback (show progress, what was tried)
-- [ ] Add `--scope` flag to limit changes to specific directories
+- [x] Implement cumulative diff review (show all changes before commit)
+- [x] Add rollback capability for file changes
+- [x] Improve iteration feedback (show progress, what was tried)
+- [x] Add `--scope` flag to limit changes to specific directories
 - [ ] Add git auto-commit after successful fix (optional)
 - [ ] Improve tool selection heuristics
 

@@ -90,10 +90,12 @@ func fetchSolutions(query string) {
 	client := llm.NewHybridClient()
 
 	backend := "Ollama"
+	badge := fmt.Sprintf("%s⚡ local%s", colorGreen, colorReset)
 	if client.HasPerplexity() {
 		backend = "Perplexity"
+		badge = fmt.Sprintf("%s☁ cloud%s", colorCyan, colorReset)
 	}
-	printInfo(fmt.Sprintf("Researching via %s: %s...", backend, query))
+	fmt.Printf("  [%s] Researching via %s: %s...\n", badge, backend, query)
 
 	s := newSpinner("Researching...")
 	result, err := client.Research(query)

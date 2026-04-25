@@ -12,10 +12,26 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
+func skipIfNoDocker(t *testing.T) {
+	t.Helper()
+	cli, err := NewDockerClient()
+	if err != nil {
+		t.Skipf("Docker not available, skipping: %v", err)
+	}
+	defer cli.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if h := cli.CheckHealth(ctx); !h.Available {
+		t.Skipf("Docker daemon not responding, skipping: %v", h.Error)
+	}
+}
+
 func TestIntegration_DockerClient_CheckHealth(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
+	skipIfNoDocker(t)
 
 	ctx := context.Background()
 
@@ -72,6 +88,7 @@ func TestIntegration_DockerClient_StartStop(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
+	skipIfNoDocker(t)
 
 	ctx := context.Background()
 
@@ -133,6 +150,7 @@ func TestIntegration_DockerClient_ContainerLogs(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
+	skipIfNoDocker(t)
 
 	ctx := context.Background()
 
@@ -187,6 +205,7 @@ func TestIntegration_MockOllamaAPI(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
+	skipIfNoDocker(t)
 
 	ctx := context.Background()
 

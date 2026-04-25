@@ -27,7 +27,45 @@ const (
 	RequestTimeout   = 5 * time.Minute
 )
 
-// ── Docker Management (unchanged) ────────────────────────────────────────────
+// ── Docker Management ────────────────────────────────────────────────────────
+
+// OllamaStatus describes the state of the Ollama service for diagnostics.
+type OllamaStatus struct {
+	Running    bool
+	URL        string
+	ModelCount int
+	ViaDocker  bool
+}
+
+// CheckOllamaStatus probes the Ollama API and returns its status without
+// attempting to start anything. Useful for offline-mode indicators.
+func CheckOllamaStatus() OllamaStatus {
+	status := OllamaStatus{URL: DefaultOllamaURL}
+
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(DefaultOllamaURL + "/api/tags")
+	if err != nil {
+		return status
+	}
+	defer resp.Body.Close()
+
+	status.Running = true
+
+	var tags struct {
+		Models []struct{ Name string } `json:"models"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&tags) == nil {
+		status.ModelCount = len(tags.Models)
+	}
+
+	// Detect if running via Docker
+	dockerCheck := exec.Command("docker", "ps", "--filter", "name=ollama", "--format", "{{.Names}}")
+	if out, err := dockerCheck.Output(); err == nil && strings.TrimSpace(string(out)) != "" {
+		status.ViaDocker = true
+	}
+
+	return status
+}
 
 func EnsureOllamaRunning() error {
 	client := &http.Client{Timeout: 2 * time.Second}
@@ -37,14 +75,26 @@ func EnsureOllamaRunning() error {
 		return nil
 	}
 
-	fmt.Println("\033[33m⚡ Ollama not running, starting...\033[0m")
+	fmt.Println("\033[33m⚡ Ollama not running, attempting to start...\033[0m")
 
+	// Check if Docker is available first
+	if err := exec.Command("docker", "info").Run(); err != nil {
+		return fmt.Errorf("ollama not running and Docker is unavailable\n" +
+			"  \033[36mFix options:\033[0m\n" +
+			"  1. Start Docker:  \033[1msudo systemctl start docker\033[0m\n" +
+			"  2. Install Ollama natively:  \033[1mcurl -fsSL https://ollama.com/install.sh | sh\033[0m\n" +
+			"  3. Run full setup:  \033[1mmake setup\033[0m")
+	}
+
+	// Try starting existing container
 	startCmd := exec.Command("docker", "start", "ollama")
 	if err := startCmd.Run(); err == nil {
+		fmt.Println("\033[90m  Restarting existing Ollama container...\033[0m")
 		return waitForOllama(client, 30*time.Second)
 	}
 
-	fmt.Println("\033[90m  Creating Ollama container...\033[0m")
+	// Try creating a new container
+	fmt.Println("\033[90m  Creating new Ollama container...\033[0m")
 	createCmd := exec.Command("docker", "run", "-d",
 		"--name", "ollama",
 		"-p", "11434:11434",
@@ -52,9 +102,18 @@ func EnsureOllamaRunning() error {
 		"--restart", "unless-stopped",
 		"ollama/ollama")
 
-	output, err := createCmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("failed to create Ollama container: %w\n%s", err, string(output))
+	output, createErr := createCmd.CombinedOutput()
+	if createErr != nil {
+		outStr := strings.TrimSpace(string(output))
+		if strings.Contains(outStr, "already in use") {
+			// Container exists but is stopped with a different state
+			_ = exec.Command("docker", "rm", "-f", "ollama").Run()
+			output, createErr = createCmd.CombinedOutput()
+		}
+		if createErr != nil {
+			return fmt.Errorf("failed to create Ollama container: %w\n  Output: %s\n"+
+				"  \033[36mTry:\033[0m make setup", createErr, strings.TrimSpace(string(output)))
+		}
 	}
 
 	return waitForOllama(client, 60*time.Second)
@@ -64,7 +123,11 @@ func waitForOllama(client *http.Client, timeout time.Duration) error {
 	start := time.Now()
 	for {
 		if time.Since(start) > timeout {
-			return fmt.Errorf("timeout waiting for Ollama to start")
+			return fmt.Errorf("Ollama did not become ready within %s\n"+
+				"  \033[36mDiagnostics:\033[0m\n"+
+				"  • Check container logs: \033[1mdocker logs ollama\033[0m\n"+
+				"  • Check container status: \033[1mdocker ps -a --filter name=ollama\033[0m\n"+
+				"  • Restart from scratch: \033[1mmake setup\033[0m", timeout)
 		}
 
 		resp, err := client.Get(DefaultOllamaURL + "/api/tags")
@@ -261,7 +324,7 @@ func (p *OllamaProvider) PullModel(ctx context.Context, model string) error {
 		Stream bool   `json:"stream"`
 	}{
 		Name:   model,
-		Stream: false,
+		Stream: true,
 	}
 
 	body, err := json.Marshal(payload)
@@ -286,6 +349,31 @@ func (p *OllamaProvider) PullModel(ctx context.Context, model string) error {
 		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return fmt.Errorf("pull model '%s' failed with status %d: %s", model, resp.StatusCode, strings.TrimSpace(string(errBody)))
 	}
+
+	fmt.Printf("\n\033[36mℹ\033[0m Auto-pulling model '%s' (this may take a few minutes)...\n", model)
+	
+	decoder := json.NewDecoder(resp.Body)
+	for {
+		var progress struct {
+			Status    string `json:"status"`
+			Completed int64  `json:"completed"`
+			Total     int64  `json:"total"`
+		}
+		if err := decoder.Decode(&progress); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return fmt.Errorf("decode progress: %w", err)
+		}
+		
+		if progress.Total > 0 {
+			percent := float64(progress.Completed) / float64(progress.Total) * 100
+			fmt.Printf("\r\033[K  \033[90m%s\033[0m %.1f%% (%d/%d MB)", progress.Status, percent, progress.Completed/(1024*1024), progress.Total/(1024*1024))
+		} else {
+			fmt.Printf("\r\033[K  \033[90m%s\033[0m", progress.Status)
+		}
+	}
+	fmt.Println()
 
 	return nil
 }

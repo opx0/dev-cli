@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"dev-cli/internal/config"
+	"dev-cli/internal/diffsandbox"
 	"dev-cli/internal/llm"
 	"dev-cli/internal/pipeline"
 	"dev-cli/internal/storage"
@@ -25,6 +26,7 @@ var (
 	fixMaxIter     int
 	fixAutoApprove bool
 	fixDryRun      bool
+	fixScope       string
 )
 
 var fixCmd = &cobra.Command{
@@ -56,6 +58,7 @@ func init() {
 	fixCmd.Flags().IntVar(&fixMaxIter, "max-iterations", 10, "Maximum tool-calling iterations")
 	fixCmd.Flags().BoolVar(&fixAutoApprove, "auto-approve", false, "Auto-approve all tool calls (dangerous)")
 	fixCmd.Flags().BoolVar(&fixDryRun, "dry-run", false, "Preview actions without executing (safe for exploration)")
+	fixCmd.Flags().StringVar(&fixScope, "scope", "", "Limit changes to files under this directory")
 	rootCmd.AddCommand(fixCmd)
 }
 
@@ -110,6 +113,9 @@ func runFix(cmd *cobra.Command, args []string) {
 		agent.SetDB(db)
 	}
 
+	// Create diff tracker for change review
+	tracker := diffsandbox.NewTracker()
+
 	// Configure agent
 	agent.SetConfig(llm.AgentConfig{
 		MaxIterations: fixMaxIter,
@@ -134,6 +140,24 @@ func runFix(cmd *cobra.Command, args []string) {
 				}
 				return false // Don't actually execute in dry-run
 			}
+
+			// Scope enforcement
+			if fixScope != "" && toolName == "write_file" {
+				if path, ok := params["path"].(string); ok {
+					if !strings.HasPrefix(path, fixScope) {
+						fmt.Printf("\n%s Blocked: write to %s is outside --scope %s\n", iconWarn(), path, fixScope)
+						return false
+					}
+				}
+			}
+
+			// Snapshot file before write for diff tracking
+			if toolName == "write_file" {
+				if path, ok := params["path"].(string); ok {
+					_ = tracker.Snapshot(path)
+				}
+			}
+
 			// Only prompt for potentially destructive tools
 			if toolName == "write_file" || toolName == "run_command" {
 				fmt.Printf("\n%s Tool: %s\n", iconInfo(), toolName)
@@ -149,7 +173,18 @@ func runFix(cmd *cobra.Command, args []string) {
 				fmt.Print("  Allow? [y/N]: ")
 				var resp string
 				fmt.Scanln(&resp)
-				return resp == "y" || resp == "Y"
+				approved := resp == "y" || resp == "Y"
+
+				// Record write content after approval for diff tracking
+				if approved && toolName == "write_file" {
+					if path, ok := params["path"].(string); ok {
+						if content, ok := params["content"].(string); ok {
+							tracker.RecordWrite(path, content)
+						}
+					}
+				}
+
+				return approved
 			}
 			return true
 		},
@@ -177,16 +212,50 @@ func runFix(cmd *cobra.Command, args []string) {
 	}
 
 	// Run the agent
-	fmt.Printf("%s Analyzing (%s/%s): %s\n", iconInfo(), providerName, model, issue)
+	providerBadge := fmt.Sprintf("%s⚡ local%s", colorGreen, colorReset)
+	if providerName == "openai" {
+		providerBadge = fmt.Sprintf("%s☁ cloud%s", colorCyan, colorReset)
+	}
+	fmt.Printf("%s [%s] Analyzing (%s/%s): %s\n", iconInfo(), providerBadge, providerName, model, issue)
+
+	if fixScope != "" {
+		printInfo(fmt.Sprintf("Scope limited to: %s", fixScope))
+	}
+
 	result, err := agent.Resolve(ctx, issue)
 
 	if err != nil {
 		printError(fmt.Sprintf("Agent failed: %v", err))
+
+		// Offer rollback if changes were made before failure
+		if tracker.HasChanges() {
+			fmt.Printf("\n%s Changes were made before the failure:\n", iconWarn())
+			fmt.Print(tracker.FormatDiff())
+			fmt.Print("  Rollback all changes? [y/N]: ")
+			var resp string
+			fmt.Scanln(&resp)
+			if resp == "y" || resp == "Y" {
+				rolledBack, rollErrs := tracker.Rollback()
+				if len(rollErrs) > 0 {
+					for _, e := range rollErrs {
+						printError(fmt.Sprintf("Rollback error: %v", e))
+					}
+				}
+				printSuccess(fmt.Sprintf("Rolled back %d file(s)", rolledBack))
+			}
+		}
 		return
 	}
 
 	// Print summary
 	fmt.Println()
+
+	// Show cumulative diff if any files were changed
+	if tracker.HasChanges() {
+		fmt.Printf("%s Changes made (%d files):\n", iconInfo(), tracker.Count())
+		fmt.Print(tracker.FormatDiff())
+	}
+
 	if fixDryRun {
 		fmt.Printf("%s Dry-run complete. Actions that would be taken:\n", iconInfo())
 		if result.Summary != "" {
@@ -197,8 +266,40 @@ func runFix(cmd *cobra.Command, args []string) {
 		if result.Summary != "" {
 			fmt.Printf("\n%s Summary:\n%s\n", iconInfo(), result.Summary)
 		}
+
+		// Offer rollback even on success
+		if tracker.HasChanges() && !fixAutoApprove {
+			fmt.Print("  Undo all changes? [y/N]: ")
+			var resp string
+			fmt.Scanln(&resp)
+			if resp == "y" || resp == "Y" {
+				rolledBack, rollErrs := tracker.Rollback()
+				if len(rollErrs) > 0 {
+					for _, e := range rollErrs {
+						printError(fmt.Sprintf("Rollback error: %v", e))
+					}
+				}
+				printSuccess(fmt.Sprintf("Rolled back %d file(s)", rolledBack))
+			}
+		}
 	} else {
 		printError(fmt.Sprintf("Could not resolve: %s", result.Error))
+
+		// Offer rollback on failure
+		if tracker.HasChanges() {
+			fmt.Print("  Rollback all changes? [y/N]: ")
+			var resp string
+			fmt.Scanln(&resp)
+			if resp == "y" || resp == "Y" {
+				rolledBack, rollErrs := tracker.Rollback()
+				if len(rollErrs) > 0 {
+					for _, e := range rollErrs {
+						printError(fmt.Sprintf("Rollback error: %v", e))
+					}
+				}
+				printSuccess(fmt.Sprintf("Rolled back %d file(s)", rolledBack))
+			}
+		}
 	}
 
 	// Print tool call summary in verbose mode

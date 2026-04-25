@@ -240,3 +240,25 @@ func (o *OllamaClient) waitForAPI(ctx context.Context) error {
 func (o *OllamaClient) BaseURL() string {
 	return o.baseURL
 }
+
+func (o *OllamaClient) DeleteModel(ctx context.Context, name string) error {
+	payload := fmt.Sprintf(`{"name": "%s"}`, name)
+	req, err := http.NewRequestWithContext(ctx, "DELETE", o.baseURL+"/api/delete", strings.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("create delete request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := o.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("delete model: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("delete failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}

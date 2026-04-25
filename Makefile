@@ -55,3 +55,14 @@ check: lint test-short
 tidy:
 	go mod tidy
 
+# Full setup: Docker + Ollama + GPU + build + test
+setup:
+	@./setup.sh
+
+# Start Ollama (assumes Docker is running)
+ollama-up:
+	docker compose -f infra/ollama/docker-compose.yml up -d
+
+# Stop Ollama
+ollama-down:
+	docker compose -f infra/ollama/docker-compose.yml down
