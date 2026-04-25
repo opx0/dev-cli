@@ -220,8 +220,8 @@ func TestRegistry(t *testing.T) {
 		reg := NewRegistry()
 		reg.RegisterDefaults()
 
-		if reg.Count() != 10 {
-			t.Errorf("expected 10 default tools, got %d", reg.Count())
+		if reg.Count() != 11 {
+			t.Errorf("expected 11 default tools, got %d", reg.Count())
 		}
 	})
 }

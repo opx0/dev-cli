@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go env *)",
+      "Bash(ls \"$\\(go env GOMODCACHE\\)/github.com/mark3labs/\")",
+      "Bash(go build *)",
+      "Bash(/tmp/dev-mcp)",
+      "Bash(go test *)",
+      "Bash(DEV_CLI_CONFIG=/tmp/dev-cli-test-config.yaml /tmp/dev-cli config init)",
+      "Bash(DEV_CLI_CONFIG=/tmp/dev-cli-test-config.yaml /tmp/dev-cli config set openai.api_key sk-thisiseatestkey1234)",
+      "Bash(DEV_CLI_CONFIG=/tmp/dev-cli-test-config.yaml /tmp/dev-cli config show)",
+      "Bash(DEV_CLI_CONFIG=/tmp/dev-cli-test-config.yaml /tmp/dev-cli config get openai.api_key)",
+      "Bash(rm -f /tmp/dev-cli-test-config.yaml)",
+      "Bash(/tmp/dev-cli init *)",
+      "Bash(go vet *)",
+      "Bash(/tmp/dev-cli version *)",
+      "Bash(/tmp/dev-cli --help)",
+      "Bash(/tmp/dev-mcp --version)",
+      "Bash(DEV_CLI_LOG_DIR=/tmp/devlogs-test /tmp/dev-cli runbook list)",
+      "Bash(/tmp/dev-cli pr *)",
+      "Bash(/tmp/dev-cli gen *)"
+    ]
+  }
+}

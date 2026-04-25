@@ -124,6 +124,7 @@ func (r *Registry) RegisterDefaults() {
 	r.MustRegister(&GitInfoTool{})
 	r.MustRegister(&PackageInfoTool{})
 	r.MustRegister(&GitInspectorTool{})
+	r.MustRegister(&ReadDiffTool{})
 }
 
 // GetSchemas returns JSON schemas for all registered tools.
