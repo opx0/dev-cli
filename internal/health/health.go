@@ -62,6 +62,7 @@ func AllChecks() []func() CheckResult {
 		CheckGPU,
 		CheckDevlogsDir,
 		CheckNetwork,
+		CheckMemPalace,
 	}
 }
 

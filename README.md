@@ -103,6 +103,29 @@ Verify system dependencies and configuration.
 dev-cli doctor
 ```
 
+### `memory` — Hybrid Recall (MemPalace)
+
+Surface and write long-term memories using the [MemPalace](https://github.com/) hybrid retriever (vector + BM25 + cross-encoder rerank). Optional and opt-in. When enabled, `ask`, `explain`, `fix`, `pr`, `review`, `gen`, and `commit` quietly fold relevant prior memories into their LLM prompts; `fix` and `pr` also store their successful outcomes back so the index accumulates dev-cli's own experience over time.
+
+```bash
+# Enable
+export DEV_CLI_MEMPALACE_ENABLED=1
+pipx install mempalace        # or use the bundled `mp` binary
+
+# Use
+dev-cli memory search "kubectl rollout"
+dev-cli memory search --hall problem "ENOSPC" --limit 8
+dev-cli memory stats
+dev-cli memory ingest         # incremental ingest of Claude Code transcripts
+dev-cli memory store --hall advice "Always pin sqlite-vec to 0.1.x on Arch"
+```
+
+dev-cli writes under a wing of the form `dev-cli/<projectType>/<dirName>` (auto-derived from the project fingerprint) and tags each entry with a `dev-cli/<command>` source so you can purge or filter them at will. To turn off autonomous writes while keeping recall on:
+
+```bash
+export DEV_CLI_MEMPALACE_WRITEBACK=0
+```
+
 ---
 
 ## Available Tools
@@ -182,6 +205,11 @@ The `fix` agent uses 10 structured tools for safe, reliable execution:
 | `DEV_CLI_PERPLEXITY_KEY` / `PERPLEXITY_API_KEY` | Perplexity API key | (none) |
 | `DEV_CLI_PERPLEXITY_MODEL` | Perplexity model | `sonar-pro` |
 | `DEV_CLI_FORCE_LOCAL` | Force local (skip cloud) when set | (unset) |
+| `DEV_CLI_MEMPALACE_ENABLED` | Enable hybrid recall + write-back via MemPalace (`1/true/yes/on`) | (unset) |
+| `DEV_CLI_MEMPALACE_WING` | Override the auto-derived MemPalace wing | (auto: `dev-cli/<projectType>/<dirName>`) |
+| `DEV_CLI_MEMPALACE_HALL` | MemPalace hall filter for lookup | (unset) |
+| `DEV_CLI_MEMPALACE_LIMIT` | Max MemPalace memory results to include | `5` |
+| `DEV_CLI_MEMPALACE_WRITEBACK` | Whether to write successful runbooks/PRs back to MemPalace | `1` (on when MemPalace is enabled) |
 | `DEV_CLI_LOG_DIR` | Database directory | `~/.devlogs` (or `$XDG_DATA_HOME/dev-cli`) |
 
 ### Provider routing

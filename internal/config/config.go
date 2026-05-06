@@ -22,6 +22,11 @@ type Config struct {
 	OpenAIKey       string
 	OpenAIModel     string
 	ForceLocalLLM   bool
+	MemPalaceEnabled   bool
+	MemPalaceWing      string
+	MemPalaceHall      string
+	MemPalaceLimit     int
+	MemPalaceWriteback bool // when true (default), dev-cli writes successful runbooks/PRs back to MemPalace
 
 	// Storage / logging
 	LogDir    string
@@ -54,6 +59,11 @@ func Load() *Config {
 		OpenAIURL:          "https://api.openai.com/v1/",
 		OpenAIModel:        "gpt-4o-mini",
 		ForceLocalLLM:      false,
+		MemPalaceEnabled:   false,
+		MemPalaceWing:      "",
+		MemPalaceHall:      "",
+		MemPalaceLimit:     5,
+		MemPalaceWriteback: true,
 		LogDir:             defaultLogDir,
 		LogFormat:          "jsonl",
 		HealthCheckTimeout: 5 * time.Second,
@@ -100,6 +110,24 @@ func Load() *Config {
 	if os.Getenv("DEV_CLI_FORCE_LOCAL") != "" {
 		cfg.ForceLocalLLM = true
 	}
+	if val := os.Getenv("DEV_CLI_MEMPALACE_ENABLED"); val != "" {
+		v := val == "1" || val == "true" || val == "yes" || val == "on"
+		cfg.MemPalaceEnabled = v
+	}
+	if val := os.Getenv("DEV_CLI_MEMPALACE_WING"); val != "" {
+		cfg.MemPalaceWing = val
+	}
+	if val := os.Getenv("DEV_CLI_MEMPALACE_HALL"); val != "" {
+		cfg.MemPalaceHall = val
+	}
+	if val := os.Getenv("DEV_CLI_MEMPALACE_LIMIT"); val != "" {
+		if n, err := parsePositiveInt(val); err == nil {
+			cfg.MemPalaceLimit = n
+		}
+	}
+	if val := os.Getenv("DEV_CLI_MEMPALACE_WRITEBACK"); val != "" {
+		cfg.MemPalaceWriteback = val == "1" || val == "true" || val == "yes" || val == "on"
+	}
 	if val := os.Getenv("DEV_CLI_LOG_DIR"); val != "" {
 		cfg.LogDir = val
 	}
@@ -144,6 +172,12 @@ type FileSchema struct {
 	LogDir    string `yaml:"log_dir,omitempty"`
 	LogFormat string `yaml:"log_format,omitempty"`
 	ForceLocal bool  `yaml:"force_local,omitempty"`
+	MemPalace struct {
+		Enabled bool   `yaml:"enabled,omitempty"`
+		Wing    string `yaml:"wing,omitempty"`
+		Hall    string `yaml:"hall,omitempty"`
+		Limit   int    `yaml:"limit,omitempty"`
+	} `yaml:"mempalace,omitempty"`
 }
 
 // Path returns the path of the YAML config file: $DEV_CLI_CONFIG if set,
@@ -207,6 +241,27 @@ func applyFile(cfg *Config) {
 	if f.ForceLocal {
 		cfg.ForceLocalLLM = true
 	}
+	if f.MemPalace.Enabled {
+		cfg.MemPalaceEnabled = true
+	}
+	if f.MemPalace.Wing != "" {
+		cfg.MemPalaceWing = f.MemPalace.Wing
+	}
+	if f.MemPalace.Hall != "" {
+		cfg.MemPalaceHall = f.MemPalace.Hall
+	}
+	if f.MemPalace.Limit > 0 {
+		cfg.MemPalaceLimit = f.MemPalace.Limit
+	}
+}
+
+func parsePositiveInt(value string) (int, error) {
+	var n int
+	_, err := fmt.Sscanf(value, "%d", &n)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("invalid positive integer")
+	}
+	return n, nil
 }
 
 // ReadFile returns the file schema as currently on disk (zero value if missing).

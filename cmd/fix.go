@@ -12,6 +12,7 @@ import (
 	"dev-cli/internal/config"
 	"dev-cli/internal/diffsandbox"
 	"dev-cli/internal/llm"
+	"dev-cli/internal/memory"
 	"dev-cli/internal/pipeline"
 	"dev-cli/internal/storage"
 	"dev-cli/internal/tools"
@@ -222,7 +223,14 @@ func runFix(cmd *cobra.Command, args []string) {
 		printInfo(fmt.Sprintf("Scope limited to: %s", fixScope))
 	}
 
-	result, err := agent.Resolve(ctx, issue)
+	// Best-effort recall of prior fixes for this kind of issue. Injected as
+	// part of the user task so the agent's existing system prompt is unchanged.
+	taskInput := issue
+	if memCtx, ok := memory.BuildPromptContext(cfg, issue); ok {
+		taskInput = memCtx + "\n\nIssue to resolve: " + issue
+	}
+
+	result, err := agent.Resolve(ctx, taskInput)
 
 	if err != nil {
 		printError(fmt.Sprintf("Agent failed: %v", err))

@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 
 	"dev-cli/internal/config"
 	"dev-cli/internal/llm"
+	"dev-cli/internal/memory"
 
 	"github.com/spf13/cobra"
 )
@@ -147,15 +149,43 @@ func runPR(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("gh pr create: %s", strings.TrimSpace(string(out)))
 	}
-	fmt.Printf("\n%s %s\n", iconOK(), strings.TrimSpace(string(out)))
+	prURL := strings.TrimSpace(string(out))
+	fmt.Printf("\n%s %s\n", iconOK(), prURL)
+
+	storePRMemory(title, body, branchName, prURL)
 	return nil
+}
+
+// storePRMemory writes the accepted PR draft to MemPalace as a `decision`
+// memory so future `dev-cli pr` runs on related work can recall the
+// established voice and structure. Best-effort; never blocks the CLI.
+func storePRMemory(title, body, branch, prURL string) {
+	cfg := config.Load()
+	if !cfg.MemPalaceEnabled || !cfg.MemPalaceWriteback {
+		return
+	}
+	text := fmt.Sprintf("PR title: %s\nBranch: %s\nURL: %s\n\n%s", title, branch, prURL, body)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = memory.Store(ctx, cfg, memory.StoreReq{
+			Hall:   "decision",
+			Text:   text,
+			Source: "dev-cli/pr",
+		})
+	}()
 }
 
 func generatePRContent(commitsBlock, stats string) (title, body string, err error) {
 	cfg := config.Load()
 	client := llm.NewHybridClient()
 
-	prompt := fmt.Sprintf(`You are drafting a GitHub pull request based on the commit history below.
+	memBlock := ""
+	if mc, ok := memory.BuildPromptContext(cfg, "PR draft for: "+commitsBlock); ok {
+		memBlock = mc + "\n\n"
+	}
+
+	prompt := memBlock + fmt.Sprintf(`You are drafting a GitHub pull request based on the commit history below.
 
 Return STRICT JSON only with this shape:
 {"title": "<short imperative title, no prefix>", "body": "<markdown body>"}

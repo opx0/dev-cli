@@ -3,6 +3,7 @@ package cmd
 import (
 	"dev-cli/internal/config"
 	"dev-cli/internal/llm"
+	"dev-cli/internal/memory"
 	"fmt"
 	"os"
 	"strings"
@@ -87,6 +88,7 @@ func looksLikeToolName(args []string) bool {
 }
 
 func fetchSolutions(query string) {
+	cfg := config.Load()
 	client := llm.NewHybridClient()
 
 	backend := "Ollama"
@@ -97,8 +99,13 @@ func fetchSolutions(query string) {
 	}
 	fmt.Printf("  [%s] Researching via %s: %s...\n", badge, backend, query)
 
+	prompt := query
+	if memCtx, ok := memory.BuildPromptContext(cfg, query); ok {
+		prompt = fmt.Sprintf("%s\n\nUser query: %s", memCtx, query)
+	}
+
 	s := newSpinner("Researching...")
-	result, err := client.Research(query)
+	result, err := client.Research(prompt)
 	s.Stop()
 
 	if err != nil {

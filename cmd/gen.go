@@ -7,6 +7,7 @@ import (
 
 	"dev-cli/internal/config"
 	"dev-cli/internal/llm"
+	"dev-cli/internal/memory"
 	"dev-cli/internal/pipeline"
 	"dev-cli/internal/tools"
 	"dev-cli/internal/workflow"
@@ -102,6 +103,9 @@ func runGen(cmd *cobra.Command, args []string) error {
 
 	ctx := context.Background()
 	task := fmt.Sprintf("%s: %s", kind, target)
+	if memCtx, ok := memory.BuildPromptContext(cfg, task); ok {
+		task = memCtx + "\n\nTask: " + task
+	}
 	result, err := agent.Run(ctx, task, systemPrompt)
 	if err != nil {
 		return fmt.Errorf("agent: %w", err)

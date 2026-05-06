@@ -1,9 +1,16 @@
 package cmd
 
 import (
+	"context"
+	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
+	"time"
 
+	"dev-cli/internal/config"
+	"dev-cli/internal/memory"
 	"dev-cli/internal/storage"
 
 	"github.com/spf13/cobra"
@@ -40,7 +47,70 @@ var markResolvedCmd = &cobra.Command{
 			printError(fmt.Sprintf("marking resolution: %v", err))
 			os.Exit(1)
 		}
+
+		if resolveResolution == "solution" {
+			storeResolutionMemory(db, resolveID)
+		}
 	},
+}
+
+// storeResolutionMemory persists a `problem` memory describing a failure the
+// user confirmed was resolved. We pull the failed command + captured output
+// from history. We do not know which subsequent command served as the fix,
+// but the failure context alone is useful recall material — the LLM can
+// reason about it the next time the same error pattern shows up.
+func storeResolutionMemory(db *sql.DB, id int64) {
+	cfg := config.Load()
+	if !cfg.MemPalaceEnabled || !cfg.MemPalaceWriteback {
+		return
+	}
+	if db == nil {
+		return
+	}
+
+	item, err := storage.GetHistoryByID(db, id)
+	if err != nil || item == nil {
+		return
+	}
+
+	output := ""
+	if item.Details != "" {
+		var details map[string]any
+		if json.Unmarshal([]byte(item.Details), &details) == nil {
+			if s, ok := details["output"].(string); ok {
+				output = s
+			}
+		}
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "Command (exit %d): %s\n", item.ExitCode, item.Command)
+	if output = strings.TrimSpace(output); output != "" {
+		if len(output) > 800 {
+			output = output[:800] + "…"
+		}
+		fmt.Fprintf(&b, "\nOutput:\n%s\n", output)
+	}
+	fmt.Fprintf(&b, "\nResolved by user (resolution=%s)", resolveResolution)
+	text := strings.TrimRight(b.String(), "\n")
+
+	cwd := item.Directory
+	if cwd == "" {
+		if wd, err := os.Getwd(); err == nil {
+			cwd = wd
+		}
+	}
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = memory.Store(ctx, cfg, memory.StoreReq{
+			Hall:   "problem",
+			Cwd:    cwd,
+			Text:   text,
+			Source: fmt.Sprintf("dev-cli/explain:history-%d", id),
+		})
+	}()
 }
 
 var checkLastFailureCmd = &cobra.Command{

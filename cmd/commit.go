@@ -9,6 +9,7 @@ import (
 
 	"dev-cli/internal/config"
 	"dev-cli/internal/llm"
+	"dev-cli/internal/memory"
 
 	"github.com/spf13/cobra"
 )
@@ -140,7 +141,11 @@ func generateCommitMessage(diff, scope string) (string, error) {
 	if scope != "" {
 		scopeHint = fmt.Sprintf("Use scope %q.", scope)
 	}
-	prompt := fmt.Sprintf(`You are writing a Conventional Commits message for a staged diff.
+	memBlock := ""
+	if mc, ok := memory.BuildPromptContext(cfg, "commit message style for: "+firstLines(diff, 10)); ok {
+		memBlock = mc + "\n\n"
+	}
+	prompt := memBlock + fmt.Sprintf(`You are writing a Conventional Commits message for a staged diff.
 
 Rules:
 - First line: "<type>(<scope>): <subject>" (scope optional). Max 72 chars. Imperative mood. No trailing period.
@@ -204,6 +209,14 @@ func indentEach(s, prefix string) string {
 	lines := strings.Split(s, "\n")
 	for i, l := range lines {
 		lines[i] = prefix + l
+	}
+	return strings.Join(lines, "\n")
+}
+
+func firstLines(s string, n int) string {
+	lines := strings.SplitN(s, "\n", n+1)
+	if len(lines) > n {
+		lines = lines[:n]
 	}
 	return strings.Join(lines, "\n")
 }

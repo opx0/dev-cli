@@ -9,6 +9,7 @@ import (
 
 	"dev-cli/internal/config"
 	"dev-cli/internal/llm"
+	"dev-cli/internal/memory"
 
 	"github.com/spf13/cobra"
 )
@@ -72,7 +73,12 @@ func runReview(cmd *cobra.Command, args []string) error {
 	cfg := config.Load()
 	client := llm.NewHybridClient()
 
-	prompt := fmt.Sprintf(`You are an experienced code reviewer. Review the following diff and return STRICT JSON only.
+	memBlock := ""
+	if mc, ok := memory.BuildPromptContext(cfg, "code review: "+scopeLabel); ok {
+		memBlock = mc + "\n\n"
+	}
+
+	prompt := memBlock + fmt.Sprintf(`You are an experienced code reviewer. Review the following diff and return STRICT JSON only.
 
 Rules:
 - Findings should be concrete and actionable. Skip style nitpicks that a linter would flag.

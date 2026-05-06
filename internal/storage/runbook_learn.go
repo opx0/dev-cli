@@ -55,6 +55,13 @@ type RecordedRunbookStep struct {
 	Description string
 }
 
+// OnRunbookRecorded is an optional callback invoked after a runbook has been
+// successfully persisted via RecordRunbookFromAgent. cmd/ wires this to the
+// memory package for MemPalace write-back without creating a storage→memory
+// import cycle. Best-effort: runs on the goroutine that called the parent;
+// implementations should spawn their own goroutine if they need to be async.
+var OnRunbookRecorded func(cwd, issue, runbookID string, steps []RecordedRunbookStep)
+
 // RecordRunbookFromAgent persists a learned runbook from a successful agent run.
 // It:
 //   - Derives a project fingerprint from cwd,
@@ -114,5 +121,8 @@ func RecordRunbookFromAgent(db *sql.DB, cwd, issue string, steps []RecordedRunbo
 		return rb.ID, err
 	}
 
+	if OnRunbookRecorded != nil {
+		OnRunbookRecorded(cwd, issue, rb.ID, steps)
+	}
 	return rb.ID, nil
 }

@@ -13,6 +13,7 @@ import (
 	"dev-cli/internal/errordb"
 	"dev-cli/internal/executor"
 	"dev-cli/internal/llm"
+	"dev-cli/internal/memory"
 	"dev-cli/internal/storage"
 
 	"github.com/spf13/cobra"
@@ -268,6 +269,10 @@ func analyzeEntry(entry storage.LogEntry, interactive bool) {
 		}
 		prompt = fmt.Sprintf("Context (recent commands):\n%s\n\nFailed command: %s",
 			strings.Join(ctxLines, "\n"), entry.Command)
+	}
+
+	if memCtx, ok := memory.BuildPromptContext(cfg, entry.Command+"\n"+entry.Output); ok {
+		prompt = fmt.Sprintf("%s\n\n%s", memCtx, prompt)
 	}
 
 	result, err := client.Explain(prompt, entry.ExitCode, entry.Output)
