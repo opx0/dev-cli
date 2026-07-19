@@ -20,7 +20,7 @@ func (t *PackageInfoTool) Description() string { return "Analyze project depende
 func (t *PackageInfoTool) Parameters() []ToolParam {
 	return []ToolParam{
 		{Name: "type", Type: "string", Description: "Package type: auto, go, npm, pip", Required: false, Default: "auto"},
-		{Name: "action", Type: "string", Description: "Action: list, outdated, check", Required: false, Default: "list"},
+		{Name: "action", Type: "string", Description: "Action: list, outdated", Required: false, Default: "list"},
 		{Name: "path", Type: "string", Description: "Project path", Required: false, Default: "."},
 	}
 }
@@ -49,7 +49,13 @@ func (t *PackageInfoTool) Execute(ctx context.Context, params map[string]any) To
 
 	pkgType := GetString(params, "type", "auto")
 	action := GetString(params, "action", "list")
-	path := GetString(params, "path", ".")
+	path, err := executor.ResolvePath(GetString(params, "path", "."))
+	if err != nil {
+		return NewErrorResult("invalid project path: "+err.Error(), time.Since(start))
+	}
+	if check := executor.CheckFileSafety(path); !check.IsSafe {
+		return NewErrorResult("blocked project path: "+check.Reason, time.Since(start))
+	}
 
 	if pkgType == "auto" {
 		pkgType = detectPackageType(path)
@@ -60,11 +66,11 @@ func (t *PackageInfoTool) Execute(ctx context.Context, params map[string]any) To
 
 	switch pkgType {
 	case "go":
-		return t.analyzeGo(path, action, start)
+		return t.analyzeGo(ctx, path, action, start)
 	case "npm":
-		return t.analyzeNpm(path, action, start)
+		return t.analyzeNpm(ctx, path, action, start)
 	case "pip":
-		return t.analyzePip(path, action, start)
+		return t.analyzePip(ctx, path, action, start)
 	default:
 		return NewErrorResult("unknown package type: "+pkgType, time.Since(start))
 	}
@@ -86,7 +92,7 @@ func detectPackageType(path string) string {
 	return ""
 }
 
-func (t *PackageInfoTool) analyzeGo(path, action string, start time.Time) ToolResult {
+func (t *PackageInfoTool) analyzeGo(ctx context.Context, path, action string, start time.Time) ToolResult {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		absPath = path
@@ -95,14 +101,19 @@ func (t *PackageInfoTool) analyzeGo(path, action string, start time.Time) ToolRe
 	switch action {
 	case "list":
 
-		result := executor.ExecuteSimple("cd " + absPath + " && go list -m -f '{{.Path}}@{{.Version}}' all 2>/dev/null | head -100")
+		result := executor.ExecuteProgram(ctx, absPath, "go", "list", "-m", "-f", "{{.Path}}@{{.Version}}", "all")
+		if result.ExitCode != 0 {
+			return NewErrorResult("go list failed: "+result.Output, time.Since(start))
+		}
 
 		packages := make([]PackageInfo, 0)
 		directCount := 0
 
 		lines := strings.Split(result.Output, "\n")
 		for i, line := range lines {
-			line = strings.Trim(line, "'")
+			if i >= 100 {
+				break
+			}
 			if line == "" {
 				continue
 			}
@@ -130,11 +141,13 @@ func (t *PackageInfoTool) analyzeGo(path, action string, start time.Time) ToolRe
 
 	case "outdated":
 
-		result := executor.ExecuteSimple("cd " + absPath + " && go list -u -m -f '{{if .Update}}{{.Path}}@{{.Version}}->{{.Update.Version}}{{end}}' all 2>/dev/null")
+		result := executor.ExecuteProgram(ctx, absPath, "go", "list", "-u", "-m", "-f", "{{if .Update}}{{.Path}}@{{.Version}}->{{.Update.Version}}{{end}}", "all")
+		if result.ExitCode != 0 {
+			return NewErrorResult("go list failed: "+result.Output, time.Since(start))
+		}
 
 		outdated := make([]PackageInfo, 0)
 		for _, line := range strings.Split(result.Output, "\n") {
-			line = strings.Trim(line, "'")
 			if line == "" {
 				continue
 			}
@@ -164,7 +177,7 @@ func (t *PackageInfoTool) analyzeGo(path, action string, start time.Time) ToolRe
 	}
 }
 
-func (t *PackageInfoTool) analyzeNpm(path, action string, start time.Time) ToolResult {
+func (t *PackageInfoTool) analyzeNpm(ctx context.Context, path, action string, start time.Time) ToolResult {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		absPath = path
@@ -174,6 +187,7 @@ func (t *PackageInfoTool) analyzeNpm(path, action string, start time.Time) ToolR
 	case "list":
 
 		pkgPath := filepath.Join(absPath, "package.json")
+		// #nosec G304 -- the project root is canonicalized and safety-checked in Execute.
 		data, err := os.ReadFile(pkgPath)
 		if err != nil {
 			return NewErrorResult("cannot read package.json: "+err.Error(), time.Since(start))
@@ -204,7 +218,7 @@ func (t *PackageInfoTool) analyzeNpm(path, action string, start time.Time) ToolR
 		}, time.Since(start))
 
 	case "outdated":
-		result := executor.ExecuteSimple("cd " + absPath + " && npm outdated --json 2>/dev/null")
+		result := executor.ExecuteProgram(ctx, absPath, "npm", "outdated", "--json")
 
 		var outdatedMap map[string]struct {
 			Current string `json:"current"`
@@ -220,6 +234,8 @@ func (t *PackageInfoTool) analyzeNpm(path, action string, start time.Time) ToolR
 					Latest:  info.Latest,
 				})
 			}
+		} else if result.ExitCode != 0 {
+			return NewErrorResult("npm outdated failed: "+result.Output, time.Since(start))
 		}
 
 		return NewResult(PackageResult{
@@ -234,7 +250,7 @@ func (t *PackageInfoTool) analyzeNpm(path, action string, start time.Time) ToolR
 	}
 }
 
-func (t *PackageInfoTool) analyzePip(path, action string, start time.Time) ToolResult {
+func (t *PackageInfoTool) analyzePip(ctx context.Context, path, action string, start time.Time) ToolResult {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		absPath = path
@@ -244,10 +260,14 @@ func (t *PackageInfoTool) analyzePip(path, action string, start time.Time) ToolR
 	case "list":
 
 		reqPath := filepath.Join(absPath, "requirements.txt")
+		// #nosec G304 -- the project root is canonicalized and safety-checked in Execute.
 		data, err := os.ReadFile(reqPath)
 		if err != nil {
 
-			result := executor.ExecuteSimple("pip list --format=json 2>/dev/null")
+			result := executor.ExecuteProgram(ctx, absPath, "pip", "list", "--format=json")
+			if result.ExitCode != 0 {
+				return NewErrorResult("pip list failed: "+result.Output, time.Since(start))
+			}
 			return t.parsePipList(result.Output, absPath, start)
 		}
 
@@ -275,7 +295,10 @@ func (t *PackageInfoTool) analyzePip(path, action string, start time.Time) ToolR
 		}, time.Since(start))
 
 	case "outdated":
-		result := executor.ExecuteSimple("pip list --outdated --format=json 2>/dev/null")
+		result := executor.ExecuteProgram(ctx, absPath, "pip", "list", "--outdated", "--format=json")
+		if result.ExitCode != 0 {
+			return NewErrorResult("pip list failed: "+result.Output, time.Since(start))
+		}
 
 		var outdatedList []struct {
 			Name    string `json:"name"`

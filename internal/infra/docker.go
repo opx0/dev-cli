@@ -4,33 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
+	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/volume"
-	"github.com/docker/docker/client"
+	"dev-cli/internal/executor"
 )
-
-// LogEntry represents a single log line with metadata.
-// Used for streaming container logs.
-type LogEntry struct {
-	Timestamp     time.Time               `json:"timestamp"`
-	Container     string                  `json:"container"`
-	Stream        string                  `json:"stream"`
-	Message       string                  `json:"message"`
-	GPUSnapshot   *GPUStats               `json:"gpu,omitempty"`
-	ContainerSnap *ContainerStatsSnapshot `json:"container_stats,omitempty"`
-}
-
-// LogSink is an interface for writing log entries.
-type LogSink interface {
-	Write(entry LogEntry) error
-	Close() error
-}
 
 type ContainerInfo struct {
 	ID      string
@@ -51,7 +31,6 @@ type PortMapping struct {
 
 type ContainerDetail struct {
 	ContainerInfo
-	EnvVars   []string
 	Mounts    []Mount
 	NetworkID string
 	Cmd       []string
@@ -78,28 +57,6 @@ type ContainerStatsSnapshot struct {
 	Timestamp  time.Time
 }
 
-type ImageInfo struct {
-	ID      string
-	Tags    []string
-	Size    int64
-	Created time.Time
-}
-
-type VolumeInfo struct {
-	Name       string
-	Driver     string
-	Mountpoint string
-	CreatedAt  time.Time
-}
-
-type ProcessInfo struct {
-	PID     string
-	User    string
-	CPU     string
-	Memory  string
-	Command string
-}
-
 type DockerHealth struct {
 	Available  bool
 	Version    string
@@ -107,572 +64,195 @@ type DockerHealth struct {
 	Error      error
 }
 
-type DockerClient struct {
-	cli *client.Client
-}
+type DockerClient struct{ binary string }
 
 func NewDockerClient() (*DockerClient, error) {
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	binary, err := exec.LookPath("docker")
 	if err != nil {
-		return nil, fmt.Errorf("docker client failed: %w", err)
+		return nil, fmt.Errorf("docker executable not found: %w", err)
 	}
-	return &DockerClient{cli: cli}, nil
+	return &DockerClient{binary: binary}, nil
 }
 
 func (d *DockerClient) CheckHealth(ctx context.Context) DockerHealth {
-	health := DockerHealth{}
-
 	checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	_, err := d.cli.Ping(checkCtx)
-	if err != nil {
-		health.Error = fmt.Errorf("daemon unavailable: %w", err)
-		return health
+	version := executor.ExecuteProgram(checkCtx, "", d.binary, "version", "--format", "{{.Server.Version}}")
+	if version.ExitCode != 0 {
+		return DockerHealth{Error: fmt.Errorf("daemon unavailable: %s", version.Output)}
 	}
 
-	version, err := d.cli.ServerVersion(checkCtx)
-	if err != nil {
-		health.Error = fmt.Errorf("version check failed: %w", err)
-		return health
-	}
-	health.Version = version.Version
-
-	containers, err := d.cli.ContainerList(checkCtx, container.ListOptions{All: true})
-	if err != nil {
-		health.Error = fmt.Errorf("container list failed: %w", err)
-		return health
+	list := executor.ExecuteProgram(checkCtx, "", d.binary, "ps", "-a", "--format", "{{json .}}")
+	if list.ExitCode != 0 {
+		return DockerHealth{Error: fmt.Errorf("container list failed: %s", list.Output)}
 	}
 
-	for _, c := range containers {
-		name := ""
-		if len(c.Names) > 0 {
-			name = c.Names[0]
-			if len(name) > 0 && name[0] == '/' {
-				name = name[1:]
-			}
+	health := DockerHealth{Available: true, Version: strings.TrimSpace(version.Output)}
+	for _, line := range strings.Split(list.Output, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
 		}
-
-		var ports []PortMapping
-		for _, p := range c.Ports {
-			ports = append(ports, PortMapping{
-				Private:  p.PrivatePort,
-				Public:   p.PublicPort,
-				Protocol: p.Type,
-				HostIP:   p.IP,
-			})
+		var item struct {
+			ID        string `json:"ID"`
+			Names     string `json:"Names"`
+			Image     string `json:"Image"`
+			Status    string `json:"Status"`
+			State     string `json:"State"`
+			CreatedAt string `json:"CreatedAt"`
 		}
-
+		if err := json.Unmarshal([]byte(line), &item); err != nil {
+			return DockerHealth{Error: fmt.Errorf("decode container list: %w", err)}
+		}
+		created, _ := time.Parse("2006-01-02 15:04:05 -0700 MST", item.CreatedAt)
 		health.Containers = append(health.Containers, ContainerInfo{
-			ID:      c.ID[:12],
-			Name:    name,
-			Image:   c.Image,
-			Status:  c.Status,
-			State:   c.State,
-			Ports:   ports,
-			Created: time.Unix(c.Created, 0),
+			ID: item.ID, Name: item.Names, Image: item.Image, Status: item.Status,
+			State: item.State, Created: created,
 		})
 	}
-
-	health.Available = true
 	return health
 }
 
 func (d *DockerClient) GetContainerLogs(ctx context.Context, containerID string, tail int) ([]string, error) {
-	options := container.LogsOptions{
-		ShowStdout: true,
-		ShowStderr: true,
-		Tail:       fmt.Sprintf("%d", tail),
-		Timestamps: true,
+	result := executor.ExecuteProgram(ctx, "", d.binary, "logs", "--timestamps", "--tail", strconv.Itoa(tail), containerID)
+	if result.ExitCode != 0 {
+		return nil, fmt.Errorf("get logs failed: %s", result.Output)
 	}
-
-	reader, err := d.cli.ContainerLogs(ctx, containerID, options)
-	if err != nil {
-		return nil, fmt.Errorf("get logs failed: %w", err)
+	text := strings.TrimSpace(result.Output)
+	if text == "" {
+		return nil, nil
 	}
-	defer reader.Close()
-
-	var lines []string
-	buf := make([]byte, 8192)
-	for {
-		n, err := reader.Read(buf)
-		if n > 0 {
-			data := buf[:n]
-			for len(data) > 8 {
-				lineEnd := 8
-				for lineEnd < len(data) && data[lineEnd] != '\n' {
-					lineEnd++
-				}
-				if lineEnd > 8 {
-					line := string(data[8:lineEnd])
-					lines = append(lines, line)
-				}
-				if lineEnd >= len(data) {
-					break
-				}
-				data = data[lineEnd+1:]
-			}
-		}
-		if err != nil {
-			break
-		}
-	}
-
-	return lines, nil
-}
-
-func (d *DockerClient) Close() error {
-	if d.cli != nil {
-		return d.cli.Close()
-	}
-	return nil
-}
-
-func (d *DockerClient) StartContainer(ctx context.Context, containerID string) error {
-	return d.cli.ContainerStart(ctx, containerID, container.StartOptions{})
-}
-
-func (d *DockerClient) StopContainer(ctx context.Context, containerID string) error {
-	timeout := 10
-	return d.cli.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &timeout})
-}
-
-func (d *DockerClient) RestartContainer(ctx context.Context, containerID string) error {
-	timeout := 10
-	return d.cli.ContainerRestart(ctx, containerID, container.StopOptions{Timeout: &timeout})
-}
-
-func (d *DockerClient) RemoveContainer(ctx context.Context, containerID string, force bool) error {
-	return d.cli.ContainerRemove(ctx, containerID, container.RemoveOptions{
-		Force:         force,
-		RemoveVolumes: false,
-	})
-}
-
-func (d *DockerClient) KillContainer(ctx context.Context, containerID string) error {
-	return d.cli.ContainerKill(ctx, containerID, "SIGKILL")
-}
-
-func (d *DockerClient) PauseContainer(ctx context.Context, containerID string) error {
-	return d.cli.ContainerPause(ctx, containerID)
-}
-
-func (d *DockerClient) UnpauseContainer(ctx context.Context, containerID string) error {
-	return d.cli.ContainerUnpause(ctx, containerID)
+	return strings.Split(text, "\n"), nil
 }
 
 func (d *DockerClient) GetContainerStats(ctx context.Context, containerID string) (*ContainerStatsSnapshot, error) {
-	stats, err := d.cli.ContainerStats(ctx, containerID, false)
-	if err != nil {
-		return nil, fmt.Errorf("get stats failed: %w", err)
+	format := "{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.NetIO}}\t{{.BlockIO}}\t{{.PIDs}}"
+	result := executor.ExecuteProgram(ctx, "", d.binary, "stats", "--no-stream", "--format", format, containerID)
+	if result.ExitCode != 0 {
+		return nil, fmt.Errorf("get stats failed: %s", result.Output)
 	}
-	defer stats.Body.Close()
-
-	// Define inline struct matching Docker stats JSON response
-	var v struct {
-		CPUStats struct {
-			CPUUsage struct {
-				TotalUsage uint64 `json:"total_usage"`
-			} `json:"cpu_usage"`
-			SystemUsage uint64 `json:"system_cpu_usage"`
-			OnlineCPUs  uint64 `json:"online_cpus"`
-		} `json:"cpu_stats"`
-		PreCPUStats struct {
-			CPUUsage struct {
-				TotalUsage uint64 `json:"total_usage"`
-			} `json:"cpu_usage"`
-			SystemUsage uint64 `json:"system_cpu_usage"`
-		} `json:"precpu_stats"`
-		MemoryStats struct {
-			Usage uint64            `json:"usage"`
-			Limit uint64            `json:"limit"`
-			Stats map[string]uint64 `json:"stats"`
-		} `json:"memory_stats"`
-		Networks map[string]struct {
-			RxBytes uint64 `json:"rx_bytes"`
-			TxBytes uint64 `json:"tx_bytes"`
-		} `json:"networks"`
-		BlkioStats struct {
-			IoServiceBytesRecursive []struct {
-				Op    string `json:"op"`
-				Value uint64 `json:"value"`
-			} `json:"io_service_bytes_recursive"`
-		} `json:"blkio_stats"`
-		PidsStats struct {
-			Current uint64 `json:"current"`
-		} `json:"pids_stats"`
+	fields := strings.Split(strings.TrimSpace(result.Output), "\t")
+	if len(fields) != 6 {
+		return nil, fmt.Errorf("unexpected docker stats output")
 	}
 
-	if err := json.NewDecoder(stats.Body).Decode(&v); err != nil {
-		return nil, fmt.Errorf("decode stats failed: %w", err)
-	}
-
-	snapshot := &ContainerStatsSnapshot{
-		Timestamp: time.Now(),
-		PIDs:      v.PidsStats.Current,
-	}
-
-	cpuDelta := float64(v.CPUStats.CPUUsage.TotalUsage - v.PreCPUStats.CPUUsage.TotalUsage)
-	systemDelta := float64(v.CPUStats.SystemUsage - v.PreCPUStats.SystemUsage)
-	if systemDelta > 0 && cpuDelta > 0 {
-		snapshot.CPUPercent = (cpuDelta / systemDelta) * float64(v.CPUStats.OnlineCPUs) * 100.0
-	}
-
-	cacheVal := uint64(0)
-	if v.MemoryStats.Stats != nil {
-		cacheVal = v.MemoryStats.Stats["cache"]
-	}
-	snapshot.MemUsed = v.MemoryStats.Usage - cacheVal
-	snapshot.MemLimit = v.MemoryStats.Limit
-	if snapshot.MemLimit > 0 {
-		snapshot.MemPercent = float64(snapshot.MemUsed) / float64(snapshot.MemLimit) * 100.0
-	}
-
-	for _, netStats := range v.Networks {
-		snapshot.NetRx += netStats.RxBytes
-		snapshot.NetTx += netStats.TxBytes
-	}
-
-	for _, bioEntry := range v.BlkioStats.IoServiceBytesRecursive {
-		switch bioEntry.Op {
-		case "Read", "read":
-			snapshot.BlockRead += bioEntry.Value
-		case "Write", "write":
-			snapshot.BlockWrite += bioEntry.Value
-		}
-	}
-
+	snapshot := &ContainerStatsSnapshot{Timestamp: time.Now()}
+	snapshot.CPUPercent, _ = strconv.ParseFloat(strings.TrimSuffix(fields[0], "%"), 64)
+	snapshot.MemUsed, snapshot.MemLimit = parseBytePair(fields[1])
+	snapshot.MemPercent, _ = strconv.ParseFloat(strings.TrimSuffix(fields[2], "%"), 64)
+	snapshot.NetRx, snapshot.NetTx = parseBytePair(fields[3])
+	snapshot.BlockRead, snapshot.BlockWrite = parseBytePair(fields[4])
+	snapshot.PIDs, _ = strconv.ParseUint(strings.TrimSpace(fields[5]), 10, 64)
 	return snapshot, nil
 }
 
 func (d *DockerClient) InspectContainer(ctx context.Context, containerID string) (*ContainerDetail, error) {
-	info, err := d.cli.ContainerInspect(ctx, containerID)
-	if err != nil {
-		return nil, fmt.Errorf("inspect failed: %w", err)
+	result := executor.ExecuteProgram(ctx, "", d.binary, "inspect", containerID)
+	if result.ExitCode != 0 {
+		return nil, fmt.Errorf("inspect failed: %s", result.Output)
 	}
 
-	name := info.Name
-	if len(name) > 0 && name[0] == '/' {
-		name = name[1:]
+	var response []struct {
+		ID      string `json:"Id"`
+		Name    string `json:"Name"`
+		Created string `json:"Created"`
+		Config  struct {
+			Image string   `json:"Image"`
+			Cmd   []string `json:"Cmd"`
+		} `json:"Config"`
+		State struct {
+			Status    string `json:"Status"`
+			Running   bool   `json:"Running"`
+			StartedAt string `json:"StartedAt"`
+		} `json:"State"`
+		Mounts []struct {
+			Source      string `json:"Source"`
+			Destination string `json:"Destination"`
+			Type        string `json:"Type"`
+			RW          bool   `json:"RW"`
+		} `json:"Mounts"`
+		NetworkSettings struct {
+			Networks map[string]json.RawMessage `json:"Networks"`
+			Ports    map[string][]struct {
+				HostIP   string `json:"HostIp"`
+				HostPort string `json:"HostPort"`
+			} `json:"Ports"`
+		} `json:"NetworkSettings"`
+	}
+	if err := json.Unmarshal([]byte(result.Output), &response); err != nil || len(response) != 1 {
+		if err == nil {
+			err = fmt.Errorf("expected one container")
+		}
+		return nil, fmt.Errorf("decode inspect output: %w", err)
 	}
 
-	createdTime, _ := time.Parse(time.RFC3339Nano, info.Created)
-
-	detail := &ContainerDetail{
-		ContainerInfo: ContainerInfo{
-			ID:      info.ID[:12],
-			Name:    name,
-			Image:   info.Config.Image,
-			Status:  info.State.Status,
-			State:   info.State.Status,
-			Created: createdTime,
-		},
-		EnvVars: info.Config.Env,
-		Cmd:     info.Config.Cmd,
+	item := response[0]
+	created, _ := time.Parse(time.RFC3339Nano, item.Created)
+	detail := &ContainerDetail{ContainerInfo: ContainerInfo{
+		ID: item.ID, Name: strings.TrimPrefix(item.Name, "/"), Image: item.Config.Image,
+		Status: item.State.Status, State: item.State.Status, Created: created,
+	}, Cmd: item.Config.Cmd}
+	if item.State.Running {
+		if started, err := time.Parse(time.RFC3339Nano, item.State.StartedAt); err == nil {
+			detail.Uptime = time.Since(started).Round(time.Second).String()
+		}
 	}
-
-	if info.State.Running {
-		startTime, _ := time.Parse(time.RFC3339Nano, info.State.StartedAt)
-		detail.Uptime = time.Since(startTime).Round(time.Second).String()
-	}
-
-	for _, m := range info.Mounts {
+	for _, mount := range item.Mounts {
 		detail.Mounts = append(detail.Mounts, Mount{
-			Source:      m.Source,
-			Destination: m.Destination,
-			Type:        string(m.Type),
-			ReadOnly:    !m.RW,
+			Source: mount.Source, Destination: mount.Destination, Type: mount.Type, ReadOnly: !mount.RW,
 		})
 	}
-
-	for netName := range info.NetworkSettings.Networks {
-		detail.NetworkID = netName
+	for name := range item.NetworkSettings.Networks {
+		detail.NetworkID = name
 		break
 	}
-
-	for portProto, bindings := range info.NetworkSettings.Ports {
-		for _, b := range bindings {
-			var publicPort uint16
-			if b.HostPort != "" {
-				fmt.Sscanf(b.HostPort, "%d", &publicPort)
+	for privatePort, bindings := range item.NetworkSettings.Ports {
+		parts := strings.SplitN(privatePort, "/", 2)
+		private, err := strconv.ParseUint(parts[0], 10, 16)
+		if err != nil {
+			continue
+		}
+		protocol := "tcp"
+		if len(parts) == 2 {
+			protocol = parts[1]
+		}
+		for _, binding := range bindings {
+			public, err := strconv.ParseUint(binding.HostPort, 10, 16)
+			if err != nil {
+				continue
 			}
 			detail.Ports = append(detail.Ports, PortMapping{
-				Private:  uint16(portProto.Int()),
-				Public:   publicPort,
-				Protocol: portProto.Proto(),
-				HostIP:   b.HostIP,
+				Private: uint16(private), Public: uint16(public), Protocol: protocol, HostIP: binding.HostIP,
 			})
 		}
 	}
-
 	return detail, nil
 }
 
-func (d *DockerClient) ListImages(ctx context.Context) ([]ImageInfo, error) {
-	images, err := d.cli.ImageList(ctx, image.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("list images failed: %w", err)
+func parseBytePair(value string) (uint64, uint64) {
+	parts := strings.Split(value, "/")
+	if len(parts) != 2 {
+		return 0, 0
 	}
-
-	var result []ImageInfo
-	for _, img := range images {
-		id := img.ID
-		if len(id) > 19 {
-			id = id[7:19]
-		}
-		result = append(result, ImageInfo{
-			ID:      id,
-			Tags:    img.RepoTags,
-			Size:    img.Size,
-			Created: time.Unix(img.Created, 0),
-		})
-	}
-	return result, nil
+	return parseBytes(parts[0]), parseBytes(parts[1])
 }
 
-func (d *DockerClient) RemoveImage(ctx context.Context, imageID string, force bool) error {
-	_, err := d.cli.ImageRemove(ctx, imageID, image.RemoveOptions{
-		Force:         force,
-		PruneChildren: true,
-	})
-	return err
-}
-
-func (d *DockerClient) ListVolumes(ctx context.Context) ([]VolumeInfo, error) {
-	volumes, err := d.cli.VolumeList(ctx, volume.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("list volumes failed: %w", err)
+func parseBytes(value string) uint64 {
+	value = strings.TrimSpace(value)
+	index := 0
+	for index < len(value) && ((value[index] >= '0' && value[index] <= '9') || value[index] == '.') {
+		index++
 	}
-
-	var result []VolumeInfo
-	for _, vol := range volumes.Volumes {
-		createdAt, _ := time.Parse(time.RFC3339, vol.CreatedAt)
-		result = append(result, VolumeInfo{
-			Name:       vol.Name,
-			Driver:     vol.Driver,
-			Mountpoint: vol.Mountpoint,
-			CreatedAt:  createdAt,
-		})
+	if index == 0 {
+		return 0
 	}
-	return result, nil
-}
-
-func (d *DockerClient) RemoveVolume(ctx context.Context, volumeName string, force bool) error {
-	return d.cli.VolumeRemove(ctx, volumeName, force)
-}
-
-func (d *DockerClient) TopContainer(ctx context.Context, containerID string) ([]ProcessInfo, error) {
-	top, err := d.cli.ContainerTop(ctx, containerID, []string{})
-	if err != nil {
-		return nil, fmt.Errorf("top failed: %w", err)
+	number, err := strconv.ParseFloat(value[:index], 64)
+	if err != nil || number < 0 {
+		return 0
 	}
-
-	pidIdx, userIdx, cmdIdx := -1, -1, -1
-	for i, title := range top.Titles {
-		switch title {
-		case "PID":
-			pidIdx = i
-		case "USER":
-			userIdx = i
-		case "CMD", "COMMAND":
-			cmdIdx = i
-		}
+	multipliers := map[string]float64{
+		"b": 1, "kb": 1e3, "kib": 1 << 10, "mb": 1e6, "mib": 1 << 20,
+		"gb": 1e9, "gib": 1 << 30, "tb": 1e12, "tib": 1 << 40,
 	}
-
-	var result []ProcessInfo
-	for _, proc := range top.Processes {
-		info := ProcessInfo{}
-		if pidIdx >= 0 && pidIdx < len(proc) {
-			info.PID = proc[pidIdx]
-		}
-		if userIdx >= 0 && userIdx < len(proc) {
-			info.User = proc[userIdx]
-		}
-		if cmdIdx >= 0 && cmdIdx < len(proc) {
-			info.Command = proc[cmdIdx]
-		}
-		result = append(result, info)
-	}
-	return result, nil
-}
-
-func (d *DockerClient) PruneContainers(ctx context.Context) (uint64, error) {
-	report, err := d.cli.ContainersPrune(ctx, filters.Args{})
-	if err != nil {
-		return 0, err
-	}
-	return report.SpaceReclaimed, nil
-}
-
-func (d *DockerClient) PruneImages(ctx context.Context) (uint64, error) {
-	report, err := d.cli.ImagesPrune(ctx, filters.Args{})
-	if err != nil {
-		return 0, err
-	}
-	return report.SpaceReclaimed, nil
-}
-
-func (d *DockerClient) PruneVolumes(ctx context.Context) (uint64, error) {
-	report, err := d.cli.VolumesPrune(ctx, filters.Args{})
-	if err != nil {
-		return 0, err
-	}
-	return report.SpaceReclaimed, nil
-}
-
-// StreamLogs streams container logs to a LogSink.
-// Returns when context is cancelled or an error occurs.
-func (d *DockerClient) StreamLogs(ctx context.Context, containerID string, containerName string, sink LogSink) error {
-	options := container.LogsOptions{
-		ShowStdout: true,
-		ShowStderr: true,
-		Follow:     true,
-		Timestamps: true,
-	}
-
-	reader, err := d.cli.ContainerLogs(ctx, containerID, options)
-	if err != nil {
-		return fmt.Errorf("stream logs: %w", err)
-	}
-	defer reader.Close()
-
-	return d.processLogStream(ctx, reader, containerName, sink, nil, nil)
-}
-
-// StreamLogsToWriter streams container logs directly to an io.Writer.
-func (d *DockerClient) StreamLogsToWriter(ctx context.Context, containerID string, w io.Writer) error {
-	options := container.LogsOptions{
-		ShowStdout: true,
-		ShowStderr: true,
-		Follow:     true,
-		Timestamps: true,
-	}
-
-	reader, err := d.cli.ContainerLogs(ctx, containerID, options)
-	if err != nil {
-		return fmt.Errorf("stream logs: %w", err)
-	}
-	defer reader.Close()
-
-	buf := make([]byte, 8192)
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		n, err := reader.Read(buf)
-		if n > 0 {
-
-			data := buf[:n]
-			for len(data) > 8 {
-
-				size := int(data[4])<<24 | int(data[5])<<16 | int(data[6])<<8 | int(data[7])
-				if size <= 0 || size > len(data)-8 {
-					break
-				}
-				if _, werr := w.Write(data[8 : 8+size]); werr != nil {
-					return werr
-				}
-				if _, werr := w.Write([]byte{'\n'}); werr != nil {
-					return werr
-				}
-				data = data[8+size:]
-			}
-		}
-		if err != nil {
-			if err == io.EOF {
-				return nil
-			}
-			return err
-		}
-	}
-}
-
-// StreamLogsWithSnapshots streams logs and captures GPU/container stats at intervals.
-func (d *DockerClient) StreamLogsWithSnapshots(ctx context.Context, containerID string, containerName string, sink LogSink, gpu GPUProvider, snapshotInterval time.Duration) error {
-	options := container.LogsOptions{
-		ShowStdout: true,
-		ShowStderr: true,
-		Follow:     true,
-		Timestamps: true,
-	}
-
-	reader, err := d.cli.ContainerLogs(ctx, containerID, options)
-	if err != nil {
-		return fmt.Errorf("stream logs: %w", err)
-	}
-	defer reader.Close()
-
-	return d.processLogStream(ctx, reader, containerName, sink, gpu, &snapshotInterval)
-}
-
-// processLogStream handles the common log processing logic.
-func (d *DockerClient) processLogStream(ctx context.Context, reader io.ReadCloser, containerName string, sink LogSink, gpu GPUProvider, snapshotInterval *time.Duration) error {
-	buf := make([]byte, 8192)
-	var lastSnapshot time.Time
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		n, err := reader.Read(buf)
-		if n > 0 {
-			data := buf[:n]
-			for len(data) > 8 {
-
-				streamType := data[0]
-				size := int(data[4])<<24 | int(data[5])<<16 | int(data[6])<<8 | int(data[7])
-				if size <= 0 || size > len(data)-8 {
-					break
-				}
-
-				content := string(data[8 : 8+size])
-				stream := "stdout"
-				if streamType == 2 {
-					stream = "stderr"
-				}
-
-				timestamp := time.Now()
-				if len(content) > 30 && content[4] == '-' {
-					if t, perr := time.Parse(time.RFC3339Nano, strings.TrimSpace(content[:30])); perr == nil {
-						timestamp = t
-						content = strings.TrimSpace(content[30:])
-					}
-				}
-
-				entry := LogEntry{
-					Timestamp: timestamp,
-					Container: containerName,
-					Stream:    stream,
-					Message:   strings.TrimSuffix(content, "\n"),
-				}
-
-				if snapshotInterval != nil && time.Since(lastSnapshot) >= *snapshotInterval {
-					if gpu != nil {
-						gpuStats := gpu.GetStats()
-						entry.GPUSnapshot = &gpuStats
-					}
-
-					lastSnapshot = time.Now()
-				}
-
-				if werr := sink.Write(entry); werr != nil {
-					return werr
-				}
-
-				data = data[8+size:]
-			}
-		}
-		if err != nil {
-			if err == io.EOF {
-				return nil
-			}
-			return err
-		}
-	}
+	return uint64(number * multipliers[strings.ToLower(strings.TrimSpace(value[index:]))])
 }

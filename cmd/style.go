@@ -52,11 +52,6 @@ func printSuccess(msg string) {
 	fmt.Printf("%s %s\n", iconOK(), msg)
 }
 
-// printError prints a red error message to stderr.
-func printError(msg string) {
-	fmt.Fprintf(os.Stderr, "%s %s\n", iconFail(), msg)
-}
-
 // printWarning prints a yellow warning message to stderr.
 func printWarning(msg string) {
 	fmt.Fprintf(os.Stderr, "%s %s\n", iconWarn(), msg)
@@ -70,11 +65,6 @@ func printInfo(msg string) {
 // fmtBold wraps text in bold ANSI codes.
 func fmtBold(s string) string {
 	return colorBold + s + colorReset
-}
-
-// fmtColor wraps text in the given color and reset.
-func fmtColor(color, s string) string {
-	return color + s + colorReset
 }
 
 // separator prints a gray horizontal rule.

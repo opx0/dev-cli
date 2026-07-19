@@ -1,23 +1,16 @@
 # dev-cli Makefile
 # Development tasks for linting, testing, and building
 
-.PHONY: all build build-mcp build-all test lint clean install
+.PHONY: all build test test-short lint check clean install tidy test-integration install-lint
 
 # Default target
-all: lint test build-all
+all: check build
 
 # Build the CLI binary
 build:
 	go build -o dev-cli .
 
-# Build the MCP server binary
-build-mcp:
-	go build -o dev-mcp ./cmd/mcp/
-
-# Build both binaries
-build-all: build build-mcp
-
-# Run tests with race detection (important for sync.RWMutex in Registry)
+# Run tests with race detection
 test:
 	go test -v -race ./...
 
@@ -32,37 +25,29 @@ lint:
 # Install golangci-lint if not present
 install-lint:
 	@which golangci-lint > /dev/null || \
-		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $$(go env GOPATH)/bin
+		curl -sSfL https://golangci-lint.run/install.sh | sh -s -- -b $$(go env GOPATH)/bin v2.12.2
 
 # Clean build artifacts
 clean:
-	rm -f dev-cli dev-mcp
+	rm -f dev-cli
 	go clean
 
-# Install both binaries locally
-install: build-all
-	cp dev-cli $(GOPATH)/bin/ 2>/dev/null || cp dev-cli ~/go/bin/
-	cp dev-mcp $(GOPATH)/bin/ 2>/dev/null || cp dev-mcp ~/go/bin/
+# Install the CLI locally
+install: build
+	install -Dm755 dev-cli "$$(go env GOPATH)/bin/dev-cli"
 
 # Run integration tests only (requires Docker)
 test-integration:
 	go test -v -race -run Integration ./...
 
-# Check for issues without fixing
-check: lint test-short
+# Check for issues without changing files
+check:
+	@test -z "$$(gofmt -l .)" || (gofmt -l . && exit 1)
+	go mod tidy -diff
+	go vet ./...
+	go test -short ./...
+	golangci-lint run ./...
 
 # Tidy dependencies
 tidy:
 	go mod tidy
-
-# Full setup: Docker + Ollama + GPU + build + test
-setup:
-	@./setup.sh
-
-# Start Ollama (assumes Docker is running)
-ollama-up:
-	docker compose -f infra/ollama/docker-compose.yml up -d
-
-# Stop Ollama
-ollama-down:
-	docker compose -f infra/ollama/docker-compose.yml down

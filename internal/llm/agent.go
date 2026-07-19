@@ -3,16 +3,12 @@ package llm
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
-	"dev-cli/internal/storage"
 	"dev-cli/internal/tools"
-	"dev-cli/internal/workflow"
 
 	"github.com/briandowns/spinner"
 )
@@ -60,34 +56,14 @@ func DefaultAgentConfig() AgentConfig {
 type Agent struct {
 	provider Provider
 	registry *tools.Registry
-	engine   *workflow.Engine
 	config   AgentConfig
-	db       *sql.DB // optional: when set, successful runs are recorded as runbooks
-}
-
-// SetDB wires a persistent store for runbook learning. When set, Resolve /
-// Run will record successful agent sessions via storage.RecordRunbookFromAgent.
-func (a *Agent) SetDB(db *sql.DB) { a.db = db }
-
-// NewAgent creates a new agent with the default provider and tool registry.
-func NewAgent() *Agent {
-	registry := tools.GetRegistry()
-	registry.RegisterDefaults()
-
-	return &Agent{
-		provider: NewHybridClient(),
-		registry: registry,
-		engine:   nil, // Will be set via SetEngine if workflow integration is needed
-		config:   DefaultAgentConfig(),
-	}
 }
 
 // NewAgentWithDeps creates an agent with explicit dependencies (for testing).
-func NewAgentWithDeps(provider Provider, registry *tools.Registry, engine *workflow.Engine) *Agent {
+func NewAgentWithDeps(provider Provider, registry *tools.Registry) *Agent {
 	return &Agent{
 		provider: provider,
 		registry: registry,
-		engine:   engine,
 		config:   DefaultAgentConfig(),
 	}
 }
@@ -95,11 +71,6 @@ func NewAgentWithDeps(provider Provider, registry *tools.Registry, engine *workf
 // SetConfig updates the agent configuration.
 func (a *Agent) SetConfig(cfg AgentConfig) {
 	a.config = cfg
-}
-
-// SetEngine sets the workflow engine for checkpointing and safe mode.
-func (a *Agent) SetEngine(engine *workflow.Engine) {
-	a.engine = engine
 }
 
 // ── Execution ────────────────────────────────────────────────────────────────
@@ -172,7 +143,6 @@ func (a *Agent) Run(ctx context.Context, task string, systemPrompt string) (*Age
 			result.Success = true
 			result.Summary = resp.Content
 			a.log("✓ Task completed")
-			a.recordRunbook(task, result)
 			return result, nil
 		}
 
@@ -235,9 +205,19 @@ func (a *Agent) executeToolCall(ctx context.Context, tc ToolCall) ToolCallLog {
 		return log
 	}
 
-	// Check approval for destructive tools
-	if a.config.ApprovalFunc != nil {
-		if !a.config.ApprovalFunc(tc.Name, params) {
+	// Only explicitly known read-only tools may run without approval. This makes
+	// newly added tools fail closed until their risk has been classified.
+	if !isReadOnlyTool(tc.Name) {
+		if a.config.DryRun {
+			if a.config.ApprovalFunc != nil {
+				a.config.ApprovalFunc(tc.Name, params)
+			}
+			log.Error = "blocked by dry-run"
+			log.Duration = time.Since(startTime)
+			a.log("  ⚠ %s: blocked by dry-run", tc.Name)
+			return log
+		}
+		if a.config.ApprovalFunc == nil || !a.config.ApprovalFunc(tc.Name, params) {
 			log.Error = "denied by user"
 			log.Duration = time.Since(startTime)
 			a.log("  ⚠ %s: denied by user", tc.Name)
@@ -247,38 +227,6 @@ func (a *Agent) executeToolCall(ctx context.Context, tc ToolCall) ToolCallLog {
 
 	a.log("  ▶ Executing: %s", tc.Name)
 
-	// Execute via workflow engine if available (for checkpointing)
-	if a.engine != nil {
-		resp := a.engine.ExecuteToolStep(ctx, workflow.StepRequest{
-			ToolName:   tc.Name,
-			Parameters: params,
-		}, func(ctx context.Context, p map[string]any) (bool, string, error) {
-			result := tool.Execute(ctx, p)
-			output := a.formatToolOutput(result)
-			if result.Success {
-				return true, output, nil
-			}
-			return false, output, fmt.Errorf("%s", result.Error)
-		})
-
-		log.Success = resp.Success
-		log.Output = resp.Output
-		log.Error = resp.Error
-		log.Duration = time.Since(startTime)
-
-		if resp.Blocked {
-			log.Error = "blocked by safe mode"
-			a.log("  ⚠ %s: blocked by safe mode", tc.Name)
-		} else if log.Success {
-			a.log("  ✓ %s completed", tc.Name)
-		} else {
-			a.log("  ✗ %s failed: %s", tc.Name, log.Error)
-		}
-
-		return log
-	}
-
-	// Direct execution without workflow engine
 	result := tool.Execute(ctx, params)
 	log.Success = result.Success
 	log.Output = a.formatToolOutput(result)
@@ -292,6 +240,16 @@ func (a *Agent) executeToolCall(ctx context.Context, tc ToolCall) ToolCallLog {
 	}
 
 	return log
+}
+
+func isReadOnlyTool(name string) bool {
+	switch name {
+	case "read_file", "read_dir", "search_codebase", "query_docker", "check_ports",
+		"git_info", "package_info", "read_diff":
+		return true
+	default:
+		return false
+	}
 }
 
 // formatToolOutput converts tool result data to a string for the LLM.
@@ -321,7 +279,7 @@ func (a *Agent) formatToolOutput(result tools.ToolResult) string {
 
 // buildToolDefs converts registry tools to LLM tool definitions.
 func (a *Agent) buildToolDefs() []ToolDef {
-	providerDefs := tools.RegistryToToolDefs(a.registry)
+	providerDefs := tools.RegistryToProviderToolDefs(a.registry)
 	defs := make([]ToolDef, len(providerDefs))
 	for i, pd := range providerDefs {
 		defs[i] = ToolDef{
@@ -343,7 +301,7 @@ Available tools: %s
 Guidelines:
 1. Analyze the problem carefully before taking action
 2. Use read_file, read_dir, and search_codebase to gather information
-3. Use git_info and git_inspector to understand recent changes
+3. Use git_info and read_diff to understand recent changes
 4. Use run_command for diagnostic commands (prefer non-destructive)
 5. Use write_file only when you have a clear fix
 6. Explain your reasoning as you work
@@ -358,84 +316,4 @@ func (a *Agent) log(format string, args ...interface{}) {
 	if a.config.Verbose {
 		fmt.Printf(format+"\n", args...)
 	}
-}
-
-// recordRunbook persists a learned runbook on successful resolution. Only
-// actual successful tool calls contribute steps — denied/failed/dry-run
-// entries are filtered out. No-op when no DB is wired or the run had no
-// successful side-effects worth replaying.
-func (a *Agent) recordRunbook(task string, result *AgentResult) {
-	if a.db == nil || !result.Success || a.config.DryRun {
-		return
-	}
-	steps := make([]storage.RecordedRunbookStep, 0, len(result.ToolCalls))
-	for _, tc := range result.ToolCalls {
-		if !tc.Success {
-			continue
-		}
-		paramsJSON, err := json.Marshal(tc.Parameters)
-		if err != nil {
-			continue
-		}
-		steps = append(steps, storage.RecordedRunbookStep{
-			ToolName:    tc.ToolName,
-			Parameters:  string(paramsJSON),
-			Description: task,
-		})
-	}
-	if len(steps) == 0 {
-		return
-	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		cwd = "."
-	}
-	if _, err := storage.RecordRunbookFromAgent(a.db, cwd, task, steps); err != nil && a.config.Verbose {
-		fmt.Printf("  ⚠ could not record runbook: %v\n", err)
-	}
-}
-
-// ── Legacy Compatibility ─────────────────────────────────────────────────────
-
-// Solver interface for backward compatibility with existing code.
-type Solver interface {
-	Solve(goal string) (string, error)
-}
-
-// Executor interface for backward compatibility.
-type Executor interface {
-	Execute(command string) (success bool, errOutput string)
-}
-
-// LegacyAgent wraps the new Agent for backward compatibility with cmd/fix.go.
-// Deprecated: Use Agent directly with the new Run/Resolve methods.
-type LegacyAgent struct {
-	agent *Agent
-}
-
-// NewLegacyAgent creates a backward-compatible agent wrapper.
-// Deprecated: Use NewAgent directly.
-func NewLegacyAgent() *LegacyAgent {
-	return &LegacyAgent{agent: NewAgent()}
-}
-
-// Resolve implements the old API for backward compatibility.
-// Deprecated: Use Agent.Resolve directly.
-func (la *LegacyAgent) Resolve(issue string, approval func(string) bool) error {
-	la.agent.config.Verbose = true
-	la.agent.config.ApprovalFunc = func(toolName string, params map[string]any) bool {
-		// Convert to legacy approval format
-		desc := fmt.Sprintf("Execute tool: %s", toolName)
-		return approval(desc)
-	}
-
-	ctx := context.Background()
-	result, err := la.agent.Resolve(ctx, issue)
-	if err != nil {
-		return err
-	}
-	if !result.Success {
-		return fmt.Errorf("%s", result.Error)
-	}
-	return nil
 }

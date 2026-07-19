@@ -27,7 +27,6 @@ const (
 type PerplexityProvider struct {
 	client *openai.Client
 	model  string
-	apiKey string
 }
 
 var _ Provider = (*PerplexityProvider)(nil)
@@ -48,7 +47,6 @@ func NewPerplexityProvider(cfg *config.Config) *PerplexityProvider {
 	return &PerplexityProvider{
 		client: &client,
 		model:  cfg.PerplexityModel,
-		apiKey: cfg.PerplexityKey,
 	}
 }
 
@@ -56,6 +54,7 @@ func (p *PerplexityProvider) Name() string { return "perplexity" }
 
 // ChatCompletion sends a chat completion request through the OpenAI SDK to Perplexity.
 func (p *PerplexityProvider) ChatCompletion(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
+	req = sanitizeCloudRequest(req)
 	messages := make([]openai.ChatCompletionMessageParamUnion, 0, len(req.Messages))
 	for _, msg := range req.Messages {
 		messages = append(messages, convertMessage(msg))
@@ -174,51 +173,6 @@ OUTPUT JSON ONLY (No markdown, no code fences):
 
 	result.Query = query
 	return &result, nil
-}
-
-// AnalyzeLog identifies errors in log lines using Perplexity's web-enhanced analysis.
-func (p *PerplexityProvider) AnalyzeLog(ctx context.Context, logLines string) (*LogAnalysisResult, error) {
-	prompt := fmt.Sprintf(`You are a Log Analyzer. Identify the error in these log lines.
-
-OUTPUT JSON ONLY (No markdown):
-{
-  "explanation": "Brief description of the error (1 sentence)",
-  "fix": "Suggested command or action to fix it (or empty if unknown)"
-}
-
-LOGS:
-%s`, logLines)
-
-	resp, err := p.ChatCompletion(ctx, ChatRequest{
-		Model: p.model,
-		Messages: []Message{
-			SystemMsg("You are a helpful developer assistant. Always respond with valid JSON only, no markdown formatting."),
-			UserMsg(prompt),
-		},
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	content := strings.TrimSpace(resp.Content)
-	content = stripMarkdownFences(content)
-
-	var result LogAnalysisResult
-	if err := json.Unmarshal([]byte(content), &result); err != nil {
-		return &LogAnalysisResult{Explanation: content}, nil
-	}
-
-	return &result, nil
-}
-
-// ── Legacy Compatibility ─────────────────────────────────────────────────────
-
-// PerplexityClient is a backward-compatible alias. New code should use PerplexityProvider.
-type PerplexityClient = PerplexityProvider
-
-// NewPerplexityClient creates a new PerplexityProvider (backward-compatible name).
-func NewPerplexityClient(cfg *config.Config) *PerplexityProvider {
-	return NewPerplexityProvider(cfg)
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

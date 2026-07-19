@@ -1,12 +1,13 @@
 package executor
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 )
 
 // DangerousPatterns is the canonical list of shell patterns that could cause data loss.
-// This is the shared source of truth used by both the executor and workflow packages.
+// This is the shared source of truth for command and file safety checks.
 var DangerousPatterns = []string{
 	// File system destructive operations
 	"rm -rf",
@@ -249,35 +250,46 @@ func IsSensitiveDirectory(path string) string {
 
 // matchGlob provides simple glob matching for patterns with * wildcards.
 func matchGlob(pattern, name string) bool {
-	if !strings.Contains(pattern, "*") {
-		return pattern == name
+	matched, err := filepath.Match(pattern, name)
+	return err == nil && matched
+}
+
+// ResolvePath returns an absolute path with existing symlinks resolved. For a
+// path that does not exist yet, it resolves the nearest existing parent.
+func ResolvePath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved, nil
+	} else if !os.IsNotExist(err) {
+		return "", err
 	}
 
-	// Handle *.ext pattern
-	if strings.HasPrefix(pattern, "*") {
-		suffix := pattern[1:]
-		return strings.HasSuffix(name, suffix)
+	parent := filepath.Dir(abs)
+	for {
+		if resolved, err := filepath.EvalSymlinks(parent); err == nil {
+			rel, err := filepath.Rel(parent, abs)
+			if err != nil {
+				return "", err
+			}
+			return filepath.Join(resolved, rel), nil
+		} else if !os.IsNotExist(err) {
+			return "", err
+		}
+		next := filepath.Dir(parent)
+		if next == parent {
+			return abs, nil
+		}
+		parent = next
 	}
+}
 
-	// Handle prefix* pattern
-	if strings.HasSuffix(pattern, "*") {
-		prefix := pattern[:len(pattern)-1]
-		return strings.HasPrefix(name, prefix)
-	}
-
-	// Handle *middle* pattern
-	if strings.HasPrefix(pattern, "*") && strings.HasSuffix(pattern, "*") {
-		middle := pattern[1 : len(pattern)-1]
-		return strings.Contains(name, middle)
-	}
-
-	// Handle prefix*suffix pattern
-	parts := strings.SplitN(pattern, "*", 2)
-	if len(parts) == 2 {
-		return strings.HasPrefix(name, parts[0]) && strings.HasSuffix(name, parts[1])
-	}
-
-	return false
+// IsPathWithin reports whether path is scope itself or one of its descendants.
+func IsPathWithin(scope, path string) bool {
+	rel, err := filepath.Rel(scope, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // SafetyCheck represents the result of a safety check.

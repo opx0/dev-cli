@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -13,7 +14,6 @@ import (
 	"dev-cli/internal/errordb"
 	"dev-cli/internal/executor"
 	"dev-cli/internal/llm"
-	"dev-cli/internal/memory"
 	"dev-cli/internal/storage"
 
 	"github.com/spf13/cobra"
@@ -93,13 +93,13 @@ func init() {
 
 // ExplainResult is the JSON output format for --json mode.
 type ExplainResult struct {
-	Command      string               `json:"command"`
-	ExitCode     int                  `json:"exit_code"`
-	Explanation  string               `json:"explanation"`
-	Fix          string               `json:"fix,omitempty"`
-	Source       string               `json:"source"`       // "pattern_db" or "llm"
-	PatternMatch *errordb.Pattern     `json:"pattern,omitempty"` // When source is pattern_db
-	Context      []ContextCommand     `json:"context,omitempty"` // Surrounding commands
+	Command      string           `json:"command"`
+	ExitCode     int              `json:"exit_code"`
+	Explanation  string           `json:"explanation"`
+	Fix          string           `json:"fix,omitempty"`
+	Source       string           `json:"source"`            // "pattern_db" or "llm"
+	PatternMatch *errordb.Pattern `json:"pattern,omitempty"` // When source is pattern_db
+	Context      []ContextCommand `json:"context,omitempty"` // Surrounding commands
 }
 
 // ContextCommand is a surrounding command for context.
@@ -240,22 +240,16 @@ func analyzeEntry(entry storage.LogEntry, interactive bool) {
 		fmt.Printf("\n%s %s %s(exit %d)%s\n", iconFail(), entry.Command, colorGray, entry.ExitCode, colorReset)
 	}
 
-	if err := llm.EnsureOllamaRunning(); err != nil {
+	cfg := config.Load()
+	if err := llm.CheckOllamaAvailable(cfg); err != nil {
 		printWarning(fmt.Sprintf("Ollama not available: %v", err))
 		return
 	}
 
 	s := newSpinner("Analyzing failure...")
 
-	cfg := config.Load()
-	client := llm.NewClient(cfg)
-
-	// Offline mode indicator
-	ollamaStatus := llm.CheckOllamaStatus()
+	client := llm.NewOllamaProvider(cfg)
 	modeBadge := fmt.Sprintf("%s⚡ local%s", colorGreen, colorReset)
-	if !ollamaStatus.Running {
-		modeBadge = fmt.Sprintf("%s⚠ offline%s", colorYellow, colorReset)
-	}
 	if !explainJSON {
 		fmt.Printf("\r  [%s] ", modeBadge)
 	}
@@ -269,10 +263,6 @@ func analyzeEntry(entry storage.LogEntry, interactive bool) {
 		}
 		prompt = fmt.Sprintf("Context (recent commands):\n%s\n\nFailed command: %s",
 			strings.Join(ctxLines, "\n"), entry.Command)
-	}
-
-	if memCtx, ok := memory.BuildPromptContext(cfg, entry.Command+"\n"+entry.Output); ok {
-		prompt = fmt.Sprintf("%s\n\n%s", memCtx, prompt)
 	}
 
 	result, err := client.Explain(prompt, entry.ExitCode, entry.Output)
@@ -341,7 +331,8 @@ func promptAndRunFix(fix string) {
 
 	if response == "y" || response == "yes" {
 		fmt.Printf("   Running: %s\n", fix)
-		cmd := exec.Command("sh", "-c", fix)
+		// #nosec G204 -- the exact command is displayed, safety-checked, and approved twice above.
+		cmd := exec.CommandContext(context.Background(), "sh", "-c", fix)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		cmd.Stdin = os.Stdin

@@ -3,14 +3,10 @@ package executor
 import (
 	"bytes"
 	"context"
-	"database/sql"
-	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 	"time"
-
-	"dev-cli/internal/storage"
 )
 
 type Result struct {
@@ -23,53 +19,36 @@ type Result struct {
 	Cwd       string
 }
 
-type EventPublisher interface {
-	PublishCommandEvent(command string, exitCode int, duration time.Duration, output string)
+const maxCapturedOutput = 1024 * 1024
+
+type cappedBuffer struct {
+	buf       bytes.Buffer
+	remaining int
+	truncated bool
 }
 
-var globalDB *sql.DB
-
-func SetDatabase(db *sql.DB) {
-	globalDB = db
+func newCappedBuffer() *cappedBuffer {
+	return &cappedBuffer{remaining: maxCapturedOutput}
 }
 
-func ExecuteAndLog(command string, publisher EventPublisher) Result {
-	return ExecuteAndLogWithTimeout(command, 60*time.Second, publisher)
-}
-
-func ExecuteAndLogWithTimeout(command string, timeout time.Duration, publisher EventPublisher) Result {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	result := ExecuteWithContext(ctx, command)
-
-	if globalDB != nil {
-		logEntry := storage.LogEntry{
-			Command:    result.Command,
-			ExitCode:   result.ExitCode,
-			Output:     truncateOutput(result.Output, 10240),
-			Cwd:        result.Cwd,
-			DurationMs: result.Duration.Milliseconds(),
-			Timestamp:  result.Timestamp.Format(time.RFC3339),
-		}
-		if err := storage.SaveCommand(globalDB, logEntry); err != nil {
-
-			fmt.Fprintf(os.Stderr, "Warning: failed to log command: %v\n", err)
-		}
+func (b *cappedBuffer) Write(p []byte) (int, error) {
+	written := len(p)
+	if len(p) > b.remaining {
+		p = p[:b.remaining]
+		b.truncated = true
 	}
-
-	if publisher != nil {
-		publisher.PublishCommandEvent(result.Command, result.ExitCode, result.Duration, result.Output)
+	if len(p) > 0 {
+		_, _ = b.buf.Write(p)
+		b.remaining -= len(p)
 	}
-
-	return result
+	return written, nil
 }
 
-func truncateOutput(output string, maxLen int) string {
-	if len(output) <= maxLen {
-		return output
+func (b *cappedBuffer) String() string {
+	if b.truncated {
+		return b.buf.String() + "\n... output truncated"
 	}
-	return output[:maxLen-20] + "\n...[truncated]..."
+	return b.buf.String()
 }
 
 func getShell() string {
@@ -84,38 +63,19 @@ func getShell() string {
 	return "/bin/sh"
 }
 
-func Execute(command string) Result {
-	return ExecuteWithTimeout(command, 60*time.Second)
-}
-
-func ExecuteWithTimeout(command string, timeout time.Duration) Result {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	return ExecuteWithContext(ctx, command)
-}
-
-func ExecuteWithContext(ctx context.Context, command string) Result {
+func ExecuteWithContextInDir(ctx context.Context, command, cwd string) Result {
 	start := time.Now()
 	shell := getShell()
-	cwd, _ := os.Getwd()
-
-	var cmd *exec.Cmd
-	var wrappedCmd string
-	if strings.HasSuffix(shell, "zsh") {
-		wrappedCmd = fmt.Sprintf("source ~/.zshrc 2>/dev/null; %s", command)
-		cmd = exec.CommandContext(ctx, shell, "-c", wrappedCmd)
-	} else if strings.HasSuffix(shell, "bash") {
-		wrappedCmd = fmt.Sprintf("source ~/.bashrc 2>/dev/null; %s", command)
-		cmd = exec.CommandContext(ctx, shell, "-c", wrappedCmd)
-	} else {
-		wrappedCmd = command
-		cmd = exec.CommandContext(ctx, shell, "-c", command)
+	if cwd == "" {
+		cwd, _ = os.Getwd()
 	}
 
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	// #nosec G204 -- this is the single shell boundary; callers apply command safety and approval.
+	cmd := exec.CommandContext(ctx, shell, "-c", command)
+
+	stdout, stderr := newCappedBuffer(), newCappedBuffer()
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 
 	cmd.Dir = cwd
 	cmd.Env = os.Environ()
@@ -191,16 +151,18 @@ func filterShellNoise(stderr string) string {
 	return strings.Join(filtered, "\n")
 }
 
-func ExecuteSimple(command string) Result {
+func ExecuteProgram(ctx context.Context, cwd, name string, args ...string) Result {
 	start := time.Now()
+	// #nosec G204 -- executable and arguments stay separate; internal callers choose the program.
+	cmd := exec.CommandContext(ctx, name, args...)
 
-	cmd := exec.Command("sh", "-c", command)
+	stdout, stderr := newCappedBuffer(), newCappedBuffer()
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	cwd, _ := os.Getwd()
+	if cwd == "" {
+		cwd, _ = os.Getwd()
+	}
 	cmd.Dir = cwd
 	cmd.Env = os.Environ()
 
@@ -209,7 +171,7 @@ func ExecuteSimple(command string) Result {
 	duration := time.Since(start)
 
 	output := stdout.String()
-	if stderr.Len() > 0 {
+	if stderr.buf.Len() > 0 {
 		if output != "" && !strings.HasSuffix(output, "\n") {
 			output += "\n"
 		}
@@ -231,42 +193,12 @@ func ExecuteSimple(command string) Result {
 	}
 
 	return Result{
-		Command:   command,
+		Command:   strings.Join(append([]string{name}, args...), " "),
 		Output:    output,
 		ExitCode:  exitCode,
 		Duration:  duration,
 		Timestamp: start,
-		Shell:     "sh",
+		Shell:     name,
+		Cwd:       cwd,
 	}
-}
-
-func IsAIQuery(input string) bool {
-	input = strings.TrimSpace(input)
-	return strings.HasPrefix(input, "?") || strings.HasPrefix(input, "@")
-}
-
-func ParseAIQuery(input string) (queryType string, query string) {
-	input = strings.TrimSpace(input)
-
-	if strings.HasPrefix(input, "?") {
-		return "question", strings.TrimPrefix(input, "?")
-	}
-
-	if strings.HasPrefix(input, "@fix") {
-		return "fix", strings.TrimSpace(strings.TrimPrefix(input, "@fix"))
-	}
-
-	if strings.HasPrefix(input, "@explain") {
-		return "explain", strings.TrimSpace(strings.TrimPrefix(input, "@explain"))
-	}
-
-	if strings.HasPrefix(input, "@") {
-		parts := strings.SplitN(strings.TrimPrefix(input, "@"), " ", 2)
-		if len(parts) == 2 {
-			return parts[0], parts[1]
-		}
-		return parts[0], ""
-	}
-
-	return "", input
 }

@@ -4,10 +4,10 @@ import "testing"
 
 func TestLookup_KnownPatterns(t *testing.T) {
 	tests := []struct {
-		command  string
-		output   string
-		wantHit  bool
-		wantCat  string
+		command string
+		output  string
+		wantHit bool
+		wantCat string
 	}{
 		{"npm install", "ENOENT open 'package.json'", true, "npm"},
 		{"docker ps", "Cannot connect to the Docker daemon", true, "docker"},

@@ -17,9 +17,8 @@ import (
 // OpenAI itself, OpenRouter, Groq, Together, DeepInfra, local vLLM, etc.
 // The caller supplies base URL, key, and default model via Config.
 type OpenAIProvider struct {
-	client  *openai.Client
-	model   string
-	baseURL string
+	client *openai.Client
+	model  string
 }
 
 var _ Provider = (*OpenAIProvider)(nil)
@@ -49,22 +48,17 @@ func NewOpenAIProvider(cfg *config.Config) *OpenAIProvider {
 	)
 
 	return &OpenAIProvider{
-		client:  &client,
-		model:   model,
-		baseURL: baseURL,
+		client: &client,
+		model:  model,
 	}
 }
 
 func (p *OpenAIProvider) Name() string { return "openai" }
 
-// DefaultModel returns the configured default model (used by the routing layer
-// to pick the right model string when the caller asks for "whatever the cloud
-// provider prefers").
-func (p *OpenAIProvider) DefaultModel() string { return p.model }
-
 // ChatCompletion delegates to the shared SDK helper. If the caller did not
 // specify a model, the provider's configured default is used.
 func (p *OpenAIProvider) ChatCompletion(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
+	req = sanitizeCloudRequest(req)
 	if strings.TrimSpace(req.Model) == "" {
 		req.Model = p.model
 	}

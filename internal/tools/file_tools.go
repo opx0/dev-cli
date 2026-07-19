@@ -52,7 +52,7 @@ func (t *ReadFileTool) Execute(ctx context.Context, params map[string]any) ToolR
 		}
 	}
 
-	absPath, err := filepath.Abs(path)
+	absPath, err := executor.ResolvePath(path)
 	if err != nil {
 		return NewErrorResult(fmt.Sprintf("invalid path: %v", err), time.Since(start))
 	}
@@ -78,18 +78,18 @@ func (t *ReadFileTool) Execute(ctx context.Context, params map[string]any) ToolR
 	maxSize := GetInt(params, "max_size", 0)
 	if maxSize <= 0 {
 		maxSize = 1024 * 1024
+	} else if maxSize > 4*1024*1024 {
+		maxSize = 4 * 1024 * 1024
 	}
 
-	truncated := false
-	if info.Size() > int64(maxSize) {
-		truncated = true
-	}
+	truncated := info.Size() > int64(maxSize)
 
+	// #nosec G304 -- path is canonicalized and checked against the sensitive-path policy above.
 	file, err := os.Open(absPath)
 	if err != nil {
 		return NewErrorResult(fmt.Sprintf("cannot open file: %v", err), time.Since(start))
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	reader := io.LimitReader(file, int64(maxSize))
 	data, err := io.ReadAll(reader)
@@ -177,7 +177,7 @@ func (t *WriteFileTool) Execute(ctx context.Context, params map[string]any) Tool
 		}
 	}
 
-	absPath, err := filepath.Abs(path)
+	absPath, err := executor.ResolvePath(path)
 	if err != nil {
 		return NewErrorResult(fmt.Sprintf("invalid path: %v", err), time.Since(start))
 	}
@@ -188,14 +188,20 @@ func (t *WriteFileTool) Execute(ctx context.Context, params map[string]any) Tool
 			check.Reason, check.MatchedRule), time.Since(start))
 	}
 
-	_, err = os.Stat(absPath)
+	info, err := os.Stat(absPath)
 	exists := err == nil
+	if err != nil && !os.IsNotExist(err) {
+		return NewErrorResult(fmt.Sprintf("cannot access file: %v", err), time.Since(start))
+	}
 	created := !exists
 
 	// Create backup if requested
 	var backupPath string
 	if exists && GetBool(params, "backup", false) {
 		backupPath = absPath + ".bak"
+		if resolvedBackup, err := executor.ResolvePath(backupPath); err != nil || resolvedBackup != backupPath {
+			return NewErrorResult("backup path is unsafe or follows a symlink", time.Since(start))
+		}
 		if err := copyFile(absPath, backupPath); err != nil {
 			return NewErrorResult(fmt.Sprintf("backup failed: %v", err), time.Since(start))
 		}
@@ -203,18 +209,49 @@ func (t *WriteFileTool) Execute(ctx context.Context, params map[string]any) Tool
 
 	if GetBool(params, "create_dirs", true) {
 		dir := filepath.Dir(absPath)
-		if err := os.MkdirAll(dir, 0755); err != nil {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return NewErrorResult(fmt.Sprintf("cannot create directory: %v", err), time.Since(start))
 		}
 	}
 
 	mode := os.FileMode(0644)
-	modeStr := GetString(params, "mode", "0644")
-	if _, err := fmt.Sscanf(modeStr, "%o", &mode); err != nil {
-		mode = 0644
+	if exists {
+		mode = info.Mode().Perm()
+	}
+	if modeValue, supplied := params["mode"]; supplied {
+		modeStr, ok := modeValue.(string)
+		if !ok || modeStr == "" {
+			return NewErrorResult("mode must be an octal string", time.Since(start))
+		}
+		if _, err := fmt.Sscanf(modeStr, "%o", &mode); err != nil {
+			return NewErrorResult("mode must be an octal string", time.Since(start))
+		}
 	}
 
-	if err := os.WriteFile(absPath, []byte(content), mode); err != nil {
+	if err := ctx.Err(); err != nil {
+		return NewErrorResult(err.Error(), time.Since(start))
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(absPath), ".dev-cli-write-*")
+	if err != nil {
+		return NewErrorResult(fmt.Sprintf("create temporary file: %v", err), time.Since(start))
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+	err = tmp.Chmod(mode)
+	if err == nil {
+		_, err = tmp.WriteString(content)
+	}
+	if err == nil {
+		err = tmp.Sync()
+	}
+	closeErr := tmp.Close()
+	if err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		err = os.Rename(tmpPath, absPath)
+	}
+	if err != nil {
 		return NewErrorResult(fmt.Sprintf("write failed: %v", err), time.Since(start))
 	}
 
@@ -227,20 +264,27 @@ func (t *WriteFileTool) Execute(ctx context.Context, params map[string]any) Tool
 }
 
 func copyFile(src, dst string) error {
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	// #nosec G304 -- src was canonicalized and safety-checked by WriteFileTool.
 	source, err := os.Open(src)
 	if err != nil {
 		return err
 	}
-	defer source.Close()
+	defer func() { _ = source.Close() }()
 
-	dest, err := os.Create(dst)
+	// #nosec G304 -- dst is the validated sibling backup path and symlinks are refused.
+	dest, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
 	if err != nil {
 		return err
 	}
-	defer dest.Close()
-
-	_, err = io.Copy(dest, source)
-	return err
+	if _, err = io.Copy(dest, source); err != nil {
+		_ = dest.Close()
+		return err
+	}
+	return dest.Close()
 }
 
 // ReadDirTool lists directory contents.
@@ -292,9 +336,12 @@ func (t *ReadDirTool) Execute(ctx context.Context, params map[string]any) ToolRe
 		}
 	}
 
-	absPath, err := filepath.Abs(path)
+	absPath, err := executor.ResolvePath(path)
 	if err != nil {
 		return NewErrorResult(fmt.Sprintf("invalid path: %v", err), time.Since(start))
+	}
+	if check := executor.CheckFileSafety(absPath); !check.IsSafe {
+		return NewErrorResult(fmt.Sprintf("BLOCKED: %s (matched: %s)", check.Reason, check.MatchedRule), time.Since(start))
 	}
 
 	info, err := os.Stat(absPath)
@@ -317,8 +364,8 @@ func (t *ReadDirTool) Execute(ctx context.Context, params map[string]any) ToolRe
 		maxEntries = 1000
 	}
 
-	entries := make([]DirEntry, 0)
-	truncated := false
+	var entries []DirEntry
+	var truncated bool
 
 	if recursive {
 		entries, truncated = t.walkDir(absPath, absPath, 0, maxDepth, includeHidden, maxEntries)
@@ -350,9 +397,13 @@ func (t *ReadDirTool) listDir(dir string, includeHidden bool, maxEntries int) ([
 			return entries, true
 		}
 
+		fullPath, err := executor.ResolvePath(filepath.Join(dir, f.Name()))
+		if err != nil || !executor.CheckFileSafety(fullPath).IsSafe {
+			continue
+		}
 		entry := DirEntry{
 			Name: f.Name(),
-			Path: filepath.Join(dir, f.Name()),
+			Path: fullPath,
 		}
 
 		if f.IsDir() {
@@ -391,7 +442,10 @@ func (t *ReadDirTool) walkDir(basePath, currentPath string, currentDepth, maxDep
 			return entries, true
 		}
 
-		fullPath := filepath.Join(currentPath, f.Name())
+		fullPath, err := executor.ResolvePath(filepath.Join(currentPath, f.Name()))
+		if err != nil || !executor.CheckFileSafety(fullPath).IsSafe {
+			continue
+		}
 		entry := DirEntry{
 			Name: f.Name(),
 			Path: fullPath,

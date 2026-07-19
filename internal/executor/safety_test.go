@@ -1,8 +1,26 @@
 package executor
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestCappedBuffer(t *testing.T) {
+	buffer := newCappedBuffer()
+	payload := make([]byte, maxCapturedOutput+10)
+	written, err := buffer.Write(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if written != len(payload) {
+		t.Fatalf("writer reported %d bytes, want %d", written, len(payload))
+	}
+	if !strings.HasSuffix(buffer.String(), "... output truncated") {
+		t.Fatal("capped output did not report truncation")
+	}
+}
 
 func TestIsDangerousCommand(t *testing.T) {
 	tests := []struct {
@@ -52,6 +70,8 @@ func TestIsSensitiveFile(t *testing.T) {
 		{"pem file", "/etc/ssl/private/server.pem", true},
 		{"key file", "/etc/ssl/private/server.key", true},
 		{"credentials.json", "/app/credentials.json", true},
+		{"credentials wildcard", "/app/prod_credentials_backup", true},
+		{"secrets wildcard", "/app/team_secrets_old", true},
 		{"tfvars", "/terraform/prod.tfvars", true},
 		{"aws credentials", "/home/user/.aws/credentials", true},
 		{"master.key", "/app/config/master.key", true},
@@ -71,6 +91,35 @@ func TestIsSensitiveFile(t *testing.T) {
 				t.Errorf("IsSensitiveFile(%q) = %q, wantSensitive = %v", tt.path, got, tt.wantSen)
 			}
 		})
+	}
+}
+
+func TestResolvePathResolvesSymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "credentials.json")
+	if err := os.WriteFile(target, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "harmless.txt")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, err := ResolvePath(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if CheckFileSafety(resolved).IsSafe {
+		t.Fatal("symlink to sensitive file was considered safe")
+	}
+}
+
+func TestIsPathWithin(t *testing.T) {
+	if !IsPathWithin("/work/app", "/work/app/sub/file.go") {
+		t.Fatal("child path should be inside scope")
+	}
+	if IsPathWithin("/work/app", "/work/application/file.go") {
+		t.Fatal("sibling-prefix path escaped scope")
 	}
 }
 

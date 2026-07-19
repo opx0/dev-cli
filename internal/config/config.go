@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -15,27 +14,15 @@ type Config struct {
 	// LLM settings
 	OllamaURL       string
 	OllamaModel     string
-	OllamaUnload    bool
 	PerplexityKey   string
 	PerplexityModel string
 	OpenAIURL       string
 	OpenAIKey       string
 	OpenAIModel     string
 	ForceLocalLLM   bool
-	MemPalaceEnabled   bool
-	MemPalaceWing      string
-	MemPalaceHall      string
-	MemPalaceLimit     int
-	MemPalaceWriteback bool // when true (default), dev-cli writes successful runbooks/PRs back to MemPalace
 
 	// Storage / logging
-	LogDir    string
-	LogFormat string
-
-	// Timeouts
-	HealthCheckTimeout time.Duration
-	LogTimeout         time.Duration
-	OperationTimeout   time.Duration
+	LogDir string
 }
 
 // Load creates a Config populated from environment variables with sensible defaults.
@@ -53,22 +40,13 @@ func Load() *Config {
 	}
 
 	cfg := &Config{
-		OllamaURL:          "http://localhost:11434",
-		OllamaModel:        "smallthinker",
-		PerplexityModel:    "sonar-pro",
-		OpenAIURL:          "https://api.openai.com/v1/",
-		OpenAIModel:        "gpt-4o-mini",
-		ForceLocalLLM:      false,
-		MemPalaceEnabled:   false,
-		MemPalaceWing:      "",
-		MemPalaceHall:      "",
-		MemPalaceLimit:     5,
-		MemPalaceWriteback: true,
-		LogDir:             defaultLogDir,
-		LogFormat:          "jsonl",
-		HealthCheckTimeout: 5 * time.Second,
-		LogTimeout:         10 * time.Second,
-		OperationTimeout:   30 * time.Second,
+		OllamaURL:       "http://localhost:11434",
+		OllamaModel:     "smallthinker",
+		PerplexityModel: "sonar-pro",
+		OpenAIURL:       "https://api.openai.com/v1/",
+		OpenAIModel:     "gpt-4o-mini",
+		ForceLocalLLM:   false,
+		LogDir:          defaultLogDir,
 	}
 
 	// Apply YAML config file (after defaults, before env). Ignore errors —
@@ -80,9 +58,6 @@ func Load() *Config {
 	}
 	if val := os.Getenv("DEV_CLI_OLLAMA_MODEL"); val != "" {
 		cfg.OllamaModel = val
-	}
-	if os.Getenv("DEV_CLI_OLLAMA_UNLOAD") == "true" {
-		cfg.OllamaUnload = true
 	}
 	if val := os.Getenv("DEV_CLI_PERPLEXITY_KEY"); val != "" {
 		cfg.PerplexityKey = val
@@ -110,44 +85,12 @@ func Load() *Config {
 	if os.Getenv("DEV_CLI_FORCE_LOCAL") != "" {
 		cfg.ForceLocalLLM = true
 	}
-	if val := os.Getenv("DEV_CLI_MEMPALACE_ENABLED"); val != "" {
-		v := val == "1" || val == "true" || val == "yes" || val == "on"
-		cfg.MemPalaceEnabled = v
-	}
-	if val := os.Getenv("DEV_CLI_MEMPALACE_WING"); val != "" {
-		cfg.MemPalaceWing = val
-	}
-	if val := os.Getenv("DEV_CLI_MEMPALACE_HALL"); val != "" {
-		cfg.MemPalaceHall = val
-	}
-	if val := os.Getenv("DEV_CLI_MEMPALACE_LIMIT"); val != "" {
-		if n, err := parsePositiveInt(val); err == nil {
-			cfg.MemPalaceLimit = n
-		}
-	}
-	if val := os.Getenv("DEV_CLI_MEMPALACE_WRITEBACK"); val != "" {
-		cfg.MemPalaceWriteback = val == "1" || val == "true" || val == "yes" || val == "on"
-	}
 	if val := os.Getenv("DEV_CLI_LOG_DIR"); val != "" {
 		cfg.LogDir = val
-	}
-	if val := os.Getenv("DEV_CLI_LOG_FORMAT"); val != "" {
-		cfg.LogFormat = val
 	}
 
 	return cfg
 }
-
-func (c *Config) IsWebSearchEnabled() bool {
-	return !c.ForceLocalLLM && c.PerplexityKey != ""
-}
-
-// HasCloudLLM reports whether any cloud LLM provider is configured (OpenAI-compatible or Perplexity).
-func (c *Config) HasCloudLLM() bool {
-	return c.OpenAIKey != "" || c.PerplexityKey != ""
-}
-
-var Current = Load()
 
 // ── YAML file support ───────────────────────────────────────────────────────
 //
@@ -156,9 +99,8 @@ var Current = Load()
 
 type FileSchema struct {
 	Ollama struct {
-		URL    string `yaml:"url,omitempty"`
-		Model  string `yaml:"model,omitempty"`
-		Unload bool   `yaml:"unload,omitempty"`
+		URL   string `yaml:"url,omitempty"`
+		Model string `yaml:"model,omitempty"`
 	} `yaml:"ollama,omitempty"`
 	OpenAI struct {
 		APIKey  string `yaml:"api_key,omitempty"`
@@ -169,15 +111,8 @@ type FileSchema struct {
 		APIKey string `yaml:"api_key,omitempty"`
 		Model  string `yaml:"model,omitempty"`
 	} `yaml:"perplexity,omitempty"`
-	LogDir    string `yaml:"log_dir,omitempty"`
-	LogFormat string `yaml:"log_format,omitempty"`
-	ForceLocal bool  `yaml:"force_local,omitempty"`
-	MemPalace struct {
-		Enabled bool   `yaml:"enabled,omitempty"`
-		Wing    string `yaml:"wing,omitempty"`
-		Hall    string `yaml:"hall,omitempty"`
-		Limit   int    `yaml:"limit,omitempty"`
-	} `yaml:"mempalace,omitempty"`
+	LogDir     string `yaml:"log_dir,omitempty"`
+	ForceLocal bool   `yaml:"force_local,omitempty"`
 }
 
 // Path returns the path of the YAML config file: $DEV_CLI_CONFIG if set,
@@ -200,6 +135,7 @@ func Path() string {
 // fields to cfg. Env vars (applied later) take precedence.
 func applyFile(cfg *Config) {
 	path := Path()
+	// #nosec G304 -- the config path is intentionally user-selectable through DEV_CLI_CONFIG.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return
@@ -213,9 +149,6 @@ func applyFile(cfg *Config) {
 	}
 	if f.Ollama.Model != "" {
 		cfg.OllamaModel = f.Ollama.Model
-	}
-	if f.Ollama.Unload {
-		cfg.OllamaUnload = true
 	}
 	if f.OpenAI.APIKey != "" {
 		cfg.OpenAIKey = f.OpenAI.APIKey
@@ -235,33 +168,9 @@ func applyFile(cfg *Config) {
 	if f.LogDir != "" {
 		cfg.LogDir = f.LogDir
 	}
-	if f.LogFormat != "" {
-		cfg.LogFormat = f.LogFormat
-	}
 	if f.ForceLocal {
 		cfg.ForceLocalLLM = true
 	}
-	if f.MemPalace.Enabled {
-		cfg.MemPalaceEnabled = true
-	}
-	if f.MemPalace.Wing != "" {
-		cfg.MemPalaceWing = f.MemPalace.Wing
-	}
-	if f.MemPalace.Hall != "" {
-		cfg.MemPalaceHall = f.MemPalace.Hall
-	}
-	if f.MemPalace.Limit > 0 {
-		cfg.MemPalaceLimit = f.MemPalace.Limit
-	}
-}
-
-func parsePositiveInt(value string) (int, error) {
-	var n int
-	_, err := fmt.Sscanf(value, "%d", &n)
-	if err != nil || n <= 0 {
-		return 0, fmt.Errorf("invalid positive integer")
-	}
-	return n, nil
 }
 
 // ReadFile returns the file schema as currently on disk (zero value if missing).
@@ -281,33 +190,53 @@ func ReadFile() (FileSchema, bool) {
 // WriteFile serialises f to the config path, creating parent directories as needed.
 func WriteFile(f FileSchema) error {
 	path := Path()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
 	}
 	data, err := yaml.Marshal(&f)
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return fmt.Errorf("write config file: %w", err)
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".dev-cli-config-*")
+	if err != nil {
+		return fmt.Errorf("create temporary config: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("secure temporary config: %w", err)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write temporary config: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("sync temporary config: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temporary config: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("replace config file: %w", err)
 	}
 	return nil
 }
 
 // SetKey mutates the in-memory file schema by dotted key. Returns an error for
 // unknown keys. Supported keys:
-//   ollama.url, ollama.model, ollama.unload
-//   openai.api_key, openai.base_url, openai.model
-//   perplexity.api_key, perplexity.model
-//   log_dir, log_format, force_local
+//
+//	ollama.url, ollama.model
+//	openai.api_key, openai.base_url, openai.model
+//	perplexity.api_key, perplexity.model
+//	log_dir, force_local
 func (f *FileSchema) SetKey(key, value string) error {
 	switch key {
 	case "ollama.url":
 		f.Ollama.URL = value
 	case "ollama.model":
 		f.Ollama.Model = value
-	case "ollama.unload":
-		f.Ollama.Unload = value == "true" || value == "1" || value == "yes"
 	case "openai.api_key":
 		f.OpenAI.APIKey = value
 	case "openai.base_url":
@@ -320,8 +249,6 @@ func (f *FileSchema) SetKey(key, value string) error {
 		f.Perplexity.Model = value
 	case "log_dir":
 		f.LogDir = value
-	case "log_format":
-		f.LogFormat = value
 	case "force_local":
 		f.ForceLocal = value == "true" || value == "1" || value == "yes"
 	default:
@@ -337,8 +264,6 @@ func (f FileSchema) GetKey(key string) (string, error) {
 		return f.Ollama.URL, nil
 	case "ollama.model":
 		return f.Ollama.Model, nil
-	case "ollama.unload":
-		return fmt.Sprintf("%t", f.Ollama.Unload), nil
 	case "openai.api_key":
 		return f.OpenAI.APIKey, nil
 	case "openai.base_url":
@@ -351,8 +276,6 @@ func (f FileSchema) GetKey(key string) (string, error) {
 		return f.Perplexity.Model, nil
 	case "log_dir":
 		return f.LogDir, nil
-	case "log_format":
-		return f.LogFormat, nil
 	case "force_local":
 		return fmt.Sprintf("%t", f.ForceLocal), nil
 	default:

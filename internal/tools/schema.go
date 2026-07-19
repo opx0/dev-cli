@@ -2,10 +2,6 @@
 // This file contains JSON Schema generation for LLM tool integration.
 package tools
 
-import (
-	"encoding/json"
-)
-
 // ToolSchema represents a tool in JSON Schema format for LLM integration.
 type ToolSchema struct {
 	Name        string           `json:"name"`
@@ -45,9 +41,10 @@ func GenerateToolSchema(tool Tool) ToolSchema {
 			Description: p.Description,
 		}
 
-		if p.Type == "[]string" {
+		switch p.Type {
+		case "[]string":
 			prop.Items = &ToolSchemaItems{Type: "string"}
-		} else if p.Type == "[]int" {
+		case "[]int":
 			prop.Items = &ToolSchemaItems{Type: "integer"}
 		}
 
@@ -96,36 +93,4 @@ func mapTypeToJSONSchema(internalType string) string {
 	default:
 		return "string"
 	}
-}
-
-// ToolCallRequest represents a tool call from the LLM.
-type ToolCallRequest struct {
-	ToolName   string         `json:"tool_name"`
-	Parameters map[string]any `json:"parameters"`
-}
-
-// ToolsPromptJSON returns a JSON string of all tool schemas for LLM prompts.
-func ToolsPromptJSON(tools []Tool) (string, error) {
-	schemas := GenerateToolsSchema(tools)
-	data, err := json.MarshalIndent(schemas, "", "  ")
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
-}
-
-// ParseToolCall parses an LLM response into a ToolCallRequest.
-func ParseToolCall(response string) (*ToolCallRequest, error) {
-	var call ToolCallRequest
-	if err := json.Unmarshal([]byte(response), &call); err != nil {
-		return nil, err
-	}
-	return &call, nil
-}
-
-// RegistryToToolDefs returns all tools from a Registry as ProviderToolDef slice.
-// This is an alias for RegistryToProviderToolDefs for cleaner imports.
-// The llm package consumes these and converts to its internal ToolDef type.
-func RegistryToToolDefs(r *Registry) []ProviderToolDef {
-	return RegistryToProviderToolDefs(r)
 }

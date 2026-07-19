@@ -52,9 +52,12 @@ func (t *CheckPortsTool) Execute(ctx context.Context, params map[string]any) Too
 	conflicts := 0
 
 	for _, port := range ports {
+		if port < 1 || port > 65535 {
+			return NewErrorResult("ports must be between 1 and 65535", time.Since(start))
+		}
 		status := PortStatus{Port: port}
 
-		conflict := infra.CheckPortAvailable(port)
+		conflict := infra.CheckPortAvailable(ctx, port)
 		if conflict == nil {
 			status.Available = true
 		} else {
@@ -64,7 +67,7 @@ func (t *CheckPortsTool) Execute(ctx context.Context, params map[string]any) Too
 			conflicts++
 
 			if action == "suggest" {
-				status.Suggested = infra.FindAvailablePort(port)
+				status.Suggested = infra.FindAvailablePort(ctx, port)
 			}
 		}
 

@@ -18,17 +18,17 @@ var initCmd = &cobra.Command{
 	Hidden:    true,
 	ValidArgs: []string{"zsh", "bash"},
 	Args:      cobra.ExactArgs(1),
-	Run: func(cmd *cobra.Command, args []string) {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		shell := args[0]
 		switch shell {
 		case "zsh":
-			os.Stdout.WriteString(hook.ZshHook)
+			_, err := os.Stdout.WriteString(hook.ZshHook)
+			return err
 		case "bash":
-			os.Stdout.WriteString(hook.BashHook)
+			_, err := os.Stdout.WriteString(hook.BashHook)
+			return err
 		default:
-			fmt.Fprintf(os.Stderr, "Unsupported shell: %s\n", shell)
-			fmt.Fprintln(os.Stderr, "Supported shells: zsh, bash")
-			os.Exit(1)
+			return fmt.Errorf("unsupported shell %q (supported: zsh, bash)", shell)
 		}
 	},
 }
@@ -45,9 +45,9 @@ var logEventCmd = &cobra.Command{
 	Use:    "log-event",
 	Short:  "Internal: Log a command execution",
 	Hidden: true,
-	Run: func(cmd *cobra.Command, args []string) {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		if logCommand == "" {
-			return
+			return nil
 		}
 
 		db := storage.DB()
@@ -62,8 +62,9 @@ var logEventCmd = &cobra.Command{
 		}
 
 		if err := storage.SaveCommand(db, entry); err != nil {
-			fmt.Fprintf(os.Stderr, "log-event failed: %v\n", err)
+			return fmt.Errorf("log event: %w", err)
 		}
+		return nil
 	},
 }
 

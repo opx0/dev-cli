@@ -3,7 +3,6 @@ package cmd
 import (
 	"dev-cli/internal/config"
 	"dev-cli/internal/llm"
-	"dev-cli/internal/memory"
 	"fmt"
 	"os"
 	"strings"
@@ -34,15 +33,16 @@ Two modes:
   dev-cli ask "how to mount an NTFS drive on Linux"
   dev-cli ask "fix permission denied on docker.sock"`,
 	Args: cobra.MinimumNArgs(1),
-	Run: func(cmd *cobra.Command, args []string) {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		query := strings.Join(args, " ")
-
-		if assistLocal {
-			os.Setenv("DEV_CLI_FORCE_LOCAL", "1")
+		if assistCount < 1 || assistCount > 50 {
+			return fmt.Errorf("--count must be between 1 and 50")
 		}
 
-		if err := llm.EnsureOllamaRunning(); err != nil {
-			printWarning(fmt.Sprintf("Ollama not available: %v", err))
+		if assistLocal {
+			if err := os.Setenv("DEV_CLI_FORCE_LOCAL", "1"); err != nil {
+				return fmt.Errorf("force local provider: %w", err)
+			}
 		}
 
 		if looksLikeToolName(args) {
@@ -51,10 +51,9 @@ Two modes:
 			if len(args) > 1 {
 				topic = strings.Join(args[1:], " ")
 			}
-			fetchCommands(toolName, topic, assistCount)
-		} else {
-			fetchSolutions(query)
+			return fetchCommands(toolName, topic, assistCount)
 		}
+		return fetchSolutions(query)
 	},
 }
 
@@ -87,8 +86,7 @@ func looksLikeToolName(args []string) bool {
 	return len(args) == 1 || (len(args) <= 3 && !strings.Contains(strings.Join(args, " "), " to "))
 }
 
-func fetchSolutions(query string) {
-	cfg := config.Load()
+func fetchSolutions(query string) error {
 	client := llm.NewHybridClient()
 
 	backend := "Ollama"
@@ -99,23 +97,17 @@ func fetchSolutions(query string) {
 	}
 	fmt.Printf("  [%s] Researching via %s: %s...\n", badge, backend, query)
 
-	prompt := query
-	if memCtx, ok := memory.BuildPromptContext(cfg, query); ok {
-		prompt = fmt.Sprintf("%s\n\nUser query: %s", memCtx, query)
-	}
-
 	s := newSpinner("Researching...")
-	result, err := client.Research(prompt)
+	result, err := client.Research(query)
 	s.Stop()
 
 	if err != nil {
-		printError(fmt.Sprintf("Failed to get solutions: %v", err))
-		os.Exit(1)
+		return fmt.Errorf("get solutions: %w", err)
 	}
 
 	if len(result.Solutions) == 0 {
 		printWarning("No solutions found")
-		return
+		return nil
 	}
 
 	fmt.Printf("\n%s Found %d Solutions:%s\n\n", boldGreen, len(result.Solutions), colorReset)
@@ -125,12 +117,13 @@ func fetchSolutions(query string) {
 		fmt.Printf("    %s%s%s\n\n", colorWhite, sol.Description, colorReset)
 
 		for _, step := range sol.Steps {
-			if step.Type == "command" {
+			switch step.Type {
+			case "command":
 				fmt.Printf("    %s$%s %s%s%s\n", colorGray, colorReset, boldYellow, step.Content, colorReset)
 				if step.Note != "" {
 					fmt.Printf("      %s# %s%s\n", colorGray, step.Note, colorReset)
 				}
-			} else if step.Type == "file" {
+			case "file":
 				lines := strings.Split(step.Content, "\n")
 				lineCount := len(lines)
 
@@ -152,11 +145,12 @@ func fetchSolutions(query string) {
 		}
 		fmt.Println()
 	}
+	return nil
 }
 
-func fetchCommands(toolName, topic string, count int) {
+func fetchCommands(toolName, topic string, count int) error {
 	cfg := config.Load()
-	client := llm.NewClient(cfg)
+	client := llm.NewOllamaProvider(cfg)
 
 	query := toolName
 	if topic != "important and commonly used" {
@@ -168,8 +162,7 @@ func fetchCommands(toolName, topic string, count int) {
 	s.Stop()
 
 	if err != nil {
-		printError(fmt.Sprintf("Failed to fetch commands: %v", err))
-		os.Exit(1)
+		return fmt.Errorf("fetch commands: %w", err)
 	}
 
 	fmt.Printf("\n%s%s%s\n", boldCyan, query, colorReset)
@@ -186,4 +179,5 @@ func fetchCommands(toolName, topic string, count int) {
 		fmt.Printf("  %s%2d.%s %s%s%s\n", colorGreen, i+1, colorReset, colorBold, cmd.Command, colorReset)
 		fmt.Printf("      %s%s%s\n\n", colorGray, cmd.Description, colorReset)
 	}
+	return nil
 }

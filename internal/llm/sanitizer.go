@@ -19,7 +19,7 @@ func DefaultSanitizer() *Sanitizer {
 	return &Sanitizer{
 		patterns: []*secretPattern{
 			{
-				regex:       regexp.MustCompile(`(?i)(api[_-]?key|apikey)[=:]["']?([a-zA-Z0-9_\-]{20,})["']?`),
+				regex:       regexp.MustCompile(`(?i)(api[_-]?key|apikey)["']?\s*[=:]\s*["']?([a-zA-Z0-9_\-]{20,})["']?`),
 				replacement: `$1=[REDACTED_API_KEY]`,
 				name:        "API Key",
 			},
@@ -49,7 +49,7 @@ func DefaultSanitizer() *Sanitizer {
 				name:        "GitHub PAT",
 			},
 			{
-				regex:       regexp.MustCompile(`(?i)(password|passwd|pwd|secret|token)[=:]["']?([^\s"']{8,})["']?`),
+				regex:       regexp.MustCompile(`(?i)(password|passwd|pwd|secret|token)["']?\s*[=:]\s*["']?([^\s"']{8,})["']?`),
 				replacement: `$1=[REDACTED]`,
 				name:        "Password/Secret",
 			},
@@ -148,4 +148,16 @@ func PrepareForLLM(input string, maxLen int) string {
 		sanitized = TruncateForLLM(sanitized, maxLen)
 	}
 	return strings.TrimSpace(sanitized)
+}
+
+func sanitizeCloudRequest(req ChatRequest) ChatRequest {
+	req.Messages = append([]Message(nil), req.Messages...)
+	for i := range req.Messages {
+		req.Messages[i].Content = SanitizeOutput(req.Messages[i].Content)
+		req.Messages[i].ToolCalls = append([]ToolCall(nil), req.Messages[i].ToolCalls...)
+		for j := range req.Messages[i].ToolCalls {
+			req.Messages[i].ToolCalls[j].Arguments = SanitizeOutput(req.Messages[i].ToolCalls[j].Arguments)
+		}
+	}
+	return req
 }

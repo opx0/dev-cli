@@ -15,16 +15,22 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version-file: go.mod
           cache: true
+
+      - name: Check formatting
+        run: test -z "$(gofmt -l .)"
+
+      - name: Check module files
+        run: go mod tidy -diff
 
       - name: go vet
         run: go vet ./...
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v4
+        uses: golangci/golangci-lint-action@v8
         with:
-          version: latest
+          version: v2.12.2
           args: --timeout=5m
 
   test:
@@ -36,7 +42,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version-file: go.mod
           cache: true
 
       - name: go vet
@@ -68,7 +74,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version-file: go.mod
           cache: true
 
       - name: Build dev-cli
@@ -81,17 +87,6 @@ jobs:
             binary_name="${binary_name}.exe"
           fi
           go build -o "dist/${GOOS}-${GOARCH}/${binary_name}" .
-
-      - name: Build dev-mcp
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-        run: |
-          binary_name="dev-mcp"
-          if [ "$GOOS" = "windows" ]; then
-            binary_name="${binary_name}.exe"
-          fi
-          go build -o "dist/${GOOS}-${GOARCH}/${binary_name}" ./cmd/mcp/
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

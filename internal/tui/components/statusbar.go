@@ -43,29 +43,3 @@ func (s StatusBar) Render(keys help.KeyMap, focusLabel string) string {
 	content := helpView + focusIndicator
 	return theme.StatusBar.Width(s.Width).MaxWidth(s.Width).Render(content)
 }
-
-func (s StatusBar) RenderWithInfo(keys help.KeyMap, focusLabel string, info string) string {
-	helpView := s.help.View(keys)
-
-	focusStyle := lipgloss.NewStyle().
-		Foreground(theme.Lavender).
-		Bold(true)
-
-	bracketStyle := lipgloss.NewStyle().
-		Foreground(theme.Overlay0)
-
-	focusIndicator := bracketStyle.Render(" │ [") + focusStyle.Render(focusLabel) + bracketStyle.Render("]")
-
-	infoStr := ""
-	if info != "" {
-		infoStyle := lipgloss.NewStyle().Foreground(theme.Overlay0)
-		infoStr = bracketStyle.Render(" │ ") + infoStyle.Render(info)
-	}
-
-	content := helpView + focusIndicator + infoStr
-	return theme.StatusBar.Width(s.Width).MaxWidth(s.Width).Render(content)
-}
-
-func (s StatusBar) RenderSimple(text string) string {
-	return theme.StatusBar.Width(s.Width).Render(text)
-}

@@ -53,7 +53,6 @@ type DockerInspectResult struct {
 	Status    string   `json:"status"`
 	Ports     []string `json:"ports"`
 	Mounts    []string `json:"mounts"`
-	EnvVars   []string `json:"env_vars"`
 	Cmd       []string `json:"cmd"`
 	NetworkID string   `json:"network_id"`
 	Uptime    string   `json:"uptime"`
@@ -82,7 +81,7 @@ func (t *QueryDockerTool) Execute(ctx context.Context, params map[string]any) To
 		return NewErrorResult("action is required (logs, stats, inspect, list)", time.Since(start))
 	}
 
-	docker, err := infra.GetRegistry().Docker()
+	docker, err := infra.GetSharedDockerClient()
 	if err != nil {
 		return NewErrorResult(fmt.Sprintf("Docker not available: %v", err), time.Since(start))
 	}
@@ -108,6 +107,11 @@ func (t *QueryDockerTool) getLogs(ctx context.Context, docker *infra.DockerClien
 	}
 
 	tail := GetInt(params, "tail", 100)
+	if tail < 1 {
+		tail = 1
+	} else if tail > 1000 {
+		tail = 1000
+	}
 
 	lines, err := docker.GetContainerLogs(ctx, container, tail)
 	if err != nil {
@@ -173,7 +177,6 @@ func (t *QueryDockerTool) inspect(ctx context.Context, docker *infra.DockerClien
 		Status:    detail.Status,
 		Ports:     ports,
 		Mounts:    mounts,
-		EnvVars:   detail.EnvVars,
 		Cmd:       detail.Cmd,
 		NetworkID: detail.NetworkID,
 		Uptime:    detail.Uptime,
@@ -188,8 +191,12 @@ func (t *QueryDockerTool) list(ctx context.Context, docker *infra.DockerClient, 
 
 	containers := make([]DockerContainerInfo, 0, len(health.Containers))
 	for _, c := range health.Containers {
+		id := c.ID
+		if len(id) > 12 {
+			id = id[:12]
+		}
 		containers = append(containers, DockerContainerInfo{
-			ID:     c.ID[:12],
+			ID:     id,
 			Name:   strings.TrimPrefix(c.Name, "/"),
 			Image:  c.Image,
 			State:  c.State,

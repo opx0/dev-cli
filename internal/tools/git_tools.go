@@ -92,26 +92,33 @@ func (t *GitInfoTool) Execute(ctx context.Context, params map[string]any) ToolRe
 
 	switch action {
 	case "log":
-		return t.getLog(params, start)
+		return t.getLog(ctx, params, start)
 	case "blame":
-		return t.getBlame(params, start)
+		return t.getBlame(ctx, params, start)
 	case "diff":
-		return t.getDiff(params, start)
+		return t.getDiff(ctx, params, start)
 	case "status":
-		return t.getStatus(start)
+		return t.getStatus(ctx, start)
 	case "branch":
-		return t.getBranch(start)
+		return t.getBranch(ctx, start)
 	default:
 		return NewErrorResult("unknown action: "+action, time.Since(start))
 	}
 }
 
-func (t *GitInfoTool) getLog(params map[string]any, start time.Time) ToolResult {
+func (t *GitInfoTool) getLog(ctx context.Context, params map[string]any, start time.Time) ToolResult {
 	count := GetInt(params, "count", 10)
+	if count < 1 {
+		count = 1
+	} else if count > 100 {
+		count = 100
+	}
 	ref := GetString(params, "ref", "HEAD")
+	if strings.HasPrefix(ref, "-") {
+		return NewErrorResult("git ref cannot start with '-'", time.Since(start))
+	}
 
-	cmd := "git log --pretty=format:'%h|%an|%ad|%s' --date=short -n " + strconv.Itoa(count) + " " + ref
-	result := executor.ExecuteSimple(cmd)
+	result := executor.ExecuteProgram(ctx, "", "git", "log", "--pretty=format:%h|%an|%ad|%s", "--date=short", "-n", strconv.Itoa(count), ref)
 
 	if result.ExitCode != 0 {
 		return NewErrorResult("git log failed: "+result.Output, time.Since(start))
@@ -119,7 +126,6 @@ func (t *GitInfoTool) getLog(params map[string]any, start time.Time) ToolResult 
 
 	commits := make([]GitCommit, 0)
 	for _, line := range strings.Split(result.Output, "\n") {
-		line = strings.Trim(line, "'")
 		if line == "" {
 			continue
 		}
@@ -137,14 +143,20 @@ func (t *GitInfoTool) getLog(params map[string]any, start time.Time) ToolResult 
 	return NewResult(GitLogResult{Commits: commits, Count: len(commits)}, time.Since(start))
 }
 
-func (t *GitInfoTool) getBlame(params map[string]any, start time.Time) ToolResult {
+func (t *GitInfoTool) getBlame(ctx context.Context, params map[string]any, start time.Time) ToolResult {
 	path := GetString(params, "path", "")
 	if path == "" {
 		return NewErrorResult("path is required for blame action", time.Since(start))
 	}
+	resolved, err := executor.ResolvePath(path)
+	if err != nil {
+		return NewErrorResult("invalid blame path: "+err.Error(), time.Since(start))
+	}
+	if check := executor.CheckFileSafety(resolved); !check.IsSafe {
+		return NewErrorResult("blocked blame path: "+check.Reason, time.Since(start))
+	}
 
-	cmd := "git blame --line-porcelain " + path
-	result := executor.ExecuteSimple(cmd)
+	result := executor.ExecuteProgram(ctx, "", "git", "blame", "--line-porcelain", "--", path)
 
 	if result.ExitCode != 0 {
 		return NewErrorResult("git blame failed: "+result.Output, time.Since(start))
@@ -181,15 +193,28 @@ func parseBlameOutput(output string) []BlameLine {
 	return lines
 }
 
-func (t *GitInfoTool) getDiff(params map[string]any, start time.Time) ToolResult {
+func (t *GitInfoTool) getDiff(ctx context.Context, params map[string]any, start time.Time) ToolResult {
 	ref := GetString(params, "ref", "HEAD")
+	if strings.HasPrefix(ref, "-") {
+		return NewErrorResult("git ref cannot start with '-'", time.Since(start))
+	}
 
-	diffResult := executor.ExecuteSimple("git diff " + ref)
-
-	statsResult := executor.ExecuteSimple("git diff --stat " + ref)
-
-	changedResult := executor.ExecuteSimple("git diff --name-only " + ref + " | wc -l")
-	changed, _ := strconv.Atoi(strings.TrimSpace(changedResult.Output))
+	diffResult := executor.ExecuteProgram(ctx, "", "git", "diff", ref)
+	if diffResult.ExitCode != 0 {
+		return NewErrorResult("git diff failed: "+diffResult.Output, time.Since(start))
+	}
+	statsResult := executor.ExecuteProgram(ctx, "", "git", "diff", "--stat", ref)
+	if statsResult.ExitCode != 0 {
+		return NewErrorResult("git diff --stat failed: "+statsResult.Output, time.Since(start))
+	}
+	changedResult := executor.ExecuteProgram(ctx, "", "git", "diff", "--name-only", ref)
+	if changedResult.ExitCode != 0 {
+		return NewErrorResult("git diff --name-only failed: "+changedResult.Output, time.Since(start))
+	}
+	changed := 0
+	if output := strings.TrimSpace(changedResult.Output); output != "" {
+		changed = len(strings.Split(output, "\n"))
+	}
 
 	return NewResult(GitDiffResult{
 		Ref:     ref,
@@ -199,12 +224,17 @@ func (t *GitInfoTool) getDiff(params map[string]any, start time.Time) ToolResult
 	}, time.Since(start))
 }
 
-func (t *GitInfoTool) getStatus(start time.Time) ToolResult {
-
-	branchResult := executor.ExecuteSimple("git branch --show-current")
+func (t *GitInfoTool) getStatus(ctx context.Context, start time.Time) ToolResult {
+	branchResult := executor.ExecuteProgram(ctx, "", "git", "branch", "--show-current")
+	if branchResult.ExitCode != 0 {
+		return NewErrorResult("git branch failed: "+branchResult.Output, time.Since(start))
+	}
 	branch := strings.TrimSpace(branchResult.Output)
 
-	statusResult := executor.ExecuteSimple("git status --porcelain")
+	statusResult := executor.ExecuteProgram(ctx, "", "git", "status", "--porcelain")
+	if statusResult.ExitCode != 0 {
+		return NewErrorResult("git status failed: "+statusResult.Output, time.Since(start))
+	}
 
 	staged := make([]FileChange, 0)
 	unstaged := make([]FileChange, 0)
@@ -239,16 +269,21 @@ func (t *GitInfoTool) getStatus(start time.Time) ToolResult {
 	}, time.Since(start))
 }
 
-func (t *GitInfoTool) getBranch(start time.Time) ToolResult {
-
-	currentResult := executor.ExecuteSimple("git branch --show-current")
+func (t *GitInfoTool) getBranch(ctx context.Context, start time.Time) ToolResult {
+	currentResult := executor.ExecuteProgram(ctx, "", "git", "branch", "--show-current")
+	if currentResult.ExitCode != 0 {
+		return NewErrorResult("git branch failed: "+currentResult.Output, time.Since(start))
+	}
 	current := strings.TrimSpace(currentResult.Output)
 
-	branchesResult := executor.ExecuteSimple("git branch --format='%(refname:short)'")
+	branchesResult := executor.ExecuteProgram(ctx, "", "git", "branch", "--format=%(refname:short)")
+	if branchesResult.ExitCode != 0 {
+		return NewErrorResult("git branch failed: "+branchesResult.Output, time.Since(start))
+	}
 
 	branches := make([]string, 0)
 	for _, line := range strings.Split(branchesResult.Output, "\n") {
-		line = strings.Trim(strings.TrimSpace(line), "'")
+		line = strings.TrimSpace(line)
 		if line != "" {
 			branches = append(branches, line)
 		}

@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -23,7 +22,6 @@ type CheckResult struct {
 	Status  string // "ok", "warn", "fail"
 	Message string
 	FixCmd  string
-	FixFunc func() error
 }
 
 // Report is the JSON output format for agent/CI consumption.
@@ -55,14 +53,10 @@ type Summary struct {
 func AllChecks() []func() CheckResult {
 	return []func() CheckResult{
 		CheckDocker,
-		CheckDockerCompose,
 		CheckOllama,
 		CheckOllamaModel,
 		CheckLLMProvider,
-		CheckGPU,
 		CheckDevlogsDir,
-		CheckNetwork,
-		CheckMemPalace,
 	}
 }
 
@@ -77,8 +71,10 @@ func CheckLLMProvider() CheckResult {
 		ollamaURL = "http://localhost:11434"
 	}
 	client := &http.Client{Timeout: 3 * time.Second}
-	if resp, err := client.Get(ollamaURL + "/api/tags"); err == nil && resp != nil {
-		resp.Body.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if resp, err := get(ctx, client, ollamaURL+"/api/tags"); err == nil && resp != nil {
+		_ = resp.Body.Close()
 		if resp.StatusCode == 200 {
 			return CheckResult{
 				Name:    "LLM Provider",
@@ -102,7 +98,7 @@ func CheckLLMProvider() CheckResult {
 			} else {
 				return CheckResult{
 					Name:    "LLM Provider",
-					Status:  "warn",
+					Status:  "fail",
 					Message: fmt.Sprintf("OPENAI_API_KEY set but endpoint unreachable: %v", err),
 				}
 			}
@@ -113,22 +109,8 @@ func CheckLLMProvider() CheckResult {
 		Name:    "LLM Provider",
 		Status:  "fail",
 		Message: "No LLM provider available (no Ollama running, no OPENAI_API_KEY set)",
-		FixCmd:  "export OPENAI_API_KEY=… OR run: cd infra/ollama && docker compose up -d",
+		FixCmd:  "Start Ollama or configure OPENAI_API_KEY",
 	}
-}
-
-// AttemptFix tries to auto-fix a failed check.
-func AttemptFix(result CheckResult) error {
-	if result.FixFunc != nil {
-		return result.FixFunc()
-	}
-	if result.FixCmd != "" {
-		cmd := exec.Command("sh", "-c", result.FixCmd)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		return cmd.Run()
-	}
-	return fmt.Errorf("no fix available")
 }
 
 // ── Individual checks ────────────────────────────────────────────────────────
@@ -145,7 +127,7 @@ func CheckDocker() CheckResult {
 		if strings.Contains(string(output), "permission denied") {
 			return CheckResult{
 				Name:    "Docker",
-				Status:  "fail",
+				Status:  "warn",
 				Message: "Permission denied - user not in docker group",
 				FixCmd:  "sudo usermod -aG docker $USER && newgrp docker",
 			}
@@ -153,19 +135,19 @@ func CheckDocker() CheckResult {
 		if strings.Contains(string(output), "Cannot connect") || strings.Contains(err.Error(), "executable file not found") {
 			return CheckResult{
 				Name:    "Docker",
-				Status:  "fail",
+				Status:  "warn",
 				Message: "Docker daemon not running",
 				FixCmd:  "sudo systemctl start docker",
 			}
 		}
 		return CheckResult{
 			Name:    "Docker",
-			Status:  "fail",
+			Status:  "warn",
 			Message: fmt.Sprintf("Docker check failed: %v", err),
 		}
 	}
 
-	versionCmd := exec.Command("docker", "--version")
+	versionCmd := exec.CommandContext(ctx, "docker", "--version")
 	versionOutput, _ := versionCmd.Output()
 	version := strings.TrimSpace(string(versionOutput))
 
@@ -173,42 +155,6 @@ func CheckDocker() CheckResult {
 		Name:    "Docker",
 		Status:  "ok",
 		Message: version,
-	}
-}
-
-// CheckDockerCompose verifies Docker Compose is installed.
-func CheckDockerCompose() CheckResult {
-	if err := exec.Command("docker", "compose", "version").Run(); err == nil {
-		cmd := exec.Command("docker", "compose", "version", "--short")
-		output, _ := cmd.Output()
-		return CheckResult{
-			Name:    "Docker Compose",
-			Status:  "ok",
-			Message: "Plugin v" + strings.TrimSpace(string(output)),
-		}
-	}
-
-	if _, err := exec.LookPath("docker-compose"); err == nil {
-		cmd := exec.Command("docker-compose", "--version")
-		output, _ := cmd.Output()
-		return CheckResult{
-			Name:    "Docker Compose",
-			Status:  "ok",
-			Message: strings.TrimSpace(string(output)),
-		}
-	}
-
-	return CheckResult{
-		Name:    "Docker Compose",
-		Status:  "fail",
-		Message: "Docker Compose not installed",
-		FixCmd:  "sudo pacman -S docker-compose",
-		FixFunc: func() error {
-			cmd := exec.Command("sudo", "pacman", "-S", "--noconfirm", "docker-compose")
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			return cmd.Run()
-		},
 	}
 }
 
@@ -221,10 +167,12 @@ func CheckOllama() CheckResult {
 	}
 
 	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get(baseURL + "/api/tags")
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	resp, err := get(ctx, client, baseURL+"/api/tags")
 
 	if err == nil && resp != nil {
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		if resp.StatusCode == 200 {
 			return CheckResult{
 				Name:    "Ollama",
@@ -234,43 +182,25 @@ func CheckOllama() CheckResult {
 		}
 	}
 
-	dockerCheck := exec.Command("docker", "ps", "-a", "--filter", "name=ollama", "--format", "{{.Names}}")
+	dockerCtx, dockerCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer dockerCancel()
+	dockerCheck := exec.CommandContext(dockerCtx, "docker", "ps", "-a", "--filter", "name=ollama", "--format", "{{.Names}}")
 	output, _ := dockerCheck.Output()
 	containerExists := strings.TrimSpace(string(output)) != ""
 
 	if containerExists {
 		return CheckResult{
 			Name:    "Ollama",
-			Status:  "fail",
+			Status:  "warn",
 			Message: "Ollama container exists but not responding",
 			FixCmd:  "docker start ollama",
-			FixFunc: func() error {
-				cmd := exec.Command("docker", "start", "ollama")
-				cmd.Stdout = os.Stdout
-				cmd.Stderr = os.Stderr
-				return cmd.Run()
-			},
-		}
-	}
-
-	projectRoot := findProjectRoot()
-	composeFile := filepath.Join(projectRoot, "infra", "ollama", "docker-compose.yml")
-	if _, err := os.Stat(composeFile); err == nil {
-		return CheckResult{
-			Name:    "Ollama",
-			Status:  "fail",
-			Message: "Ollama not running (Docker compose available)",
-			FixCmd:  "cd infra/ollama && docker compose up -d",
-			FixFunc: func() error {
-				return runDockerCompose(composeFile, "up", "-d")
-			},
 		}
 	}
 
 	if _, err := exec.LookPath("ollama"); err == nil {
 		return CheckResult{
 			Name:    "Ollama",
-			Status:  "fail",
+			Status:  "warn",
 			Message: "Ollama installed but not running",
 			FixCmd:  "ollama serve &",
 		}
@@ -278,18 +208,9 @@ func CheckOllama() CheckResult {
 
 	return CheckResult{
 		Name:    "Ollama",
-		Status:  "fail",
+		Status:  "warn",
 		Message: "Ollama not installed",
-		FixCmd:  "cd infra/ollama && docker compose up -d",
-		FixFunc: func() error {
-			if projectRoot != "" {
-				cf := filepath.Join(projectRoot, "infra", "ollama", "docker-compose.yml")
-				if _, err := os.Stat(cf); err == nil {
-					return runDockerCompose(cf, "up", "-d")
-				}
-			}
-			return fmt.Errorf("docker-compose.yml not found - run from project root")
-		},
+		FixCmd:  "Install Ollama, then run: ollama serve",
 	}
 }
 
@@ -307,7 +228,9 @@ func CheckOllamaModel() CheckResult {
 	}
 
 	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get(baseURL + "/api/tags")
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	resp, err := get(ctx, client, baseURL+"/api/tags")
 
 	if err != nil {
 		return CheckResult{
@@ -316,7 +239,7 @@ func CheckOllamaModel() CheckResult {
 			Message: fmt.Sprintf("Cannot check models - Ollama not running at %s", baseURL),
 		}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var tagsResp struct {
 		Models []struct {
@@ -329,9 +252,6 @@ func CheckOllamaModel() CheckResult {
 			Status:  "warn",
 			Message: "No models installed",
 			FixCmd:  fmt.Sprintf("ollama pull %s", targetModel),
-			FixFunc: func() error {
-				return pullOllamaModel(cfg, targetModel)
-			},
 		}
 	}
 
@@ -352,9 +272,6 @@ func CheckOllamaModel() CheckResult {
 			Status:  "warn",
 			Message: fmt.Sprintf("Configured model '%s' not found (available: %s)", targetModel, strings.Join(available, ", ")),
 			FixCmd:  fmt.Sprintf("ollama pull %s", targetModel),
-			FixFunc: func() error {
-				return pullOllamaModel(cfg, targetModel)
-			},
 		}
 	}
 
@@ -365,48 +282,23 @@ func CheckOllamaModel() CheckResult {
 	}
 }
 
-// CheckGPU checks for NVIDIA GPU availability.
-func CheckGPU() CheckResult {
-	cmd := exec.Command("nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader")
-	output, err := cmd.Output()
-
+func get(ctx context.Context, client *http.Client, url string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return CheckResult{
-			Name:    "GPU (NVIDIA)",
-			Status:  "warn",
-			Message: "NVIDIA GPU not detected (CPU mode will be used)",
-		}
+		return nil, err
 	}
-
-	gpuInfo := strings.TrimSpace(string(output))
-	return CheckResult{
-		Name:    "GPU (NVIDIA)",
-		Status:  "ok",
-		Message: gpuInfo,
-	}
+	return client.Do(req)
 }
 
 // CheckDevlogsDir verifies the ~/.devlogs directory exists.
 func CheckDevlogsDir() CheckResult {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return CheckResult{
-			Name:    "Devlogs Directory",
-			Status:  "fail",
-			Message: "Cannot determine home directory",
-		}
-	}
-
-	devlogsDir := filepath.Join(homeDir, ".devlogs")
+	devlogsDir := config.Load().LogDir
 
 	if _, err := os.Stat(devlogsDir); os.IsNotExist(err) {
 		return CheckResult{
 			Name:    "Devlogs Directory",
 			Status:  "warn",
 			Message: fmt.Sprintf("%s does not exist", devlogsDir),
-			FixFunc: func() error {
-				return os.MkdirAll(devlogsDir, 0755)
-			},
 		}
 	}
 
@@ -415,75 +307,4 @@ func CheckDevlogsDir() CheckResult {
 		Status:  "ok",
 		Message: devlogsDir,
 	}
-}
-
-// CheckNetwork verifies external API connectivity.
-func CheckNetwork() CheckResult {
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get("https://api.perplexity.ai")
-
-	if err != nil {
-		return CheckResult{
-			Name:    "Network",
-			Status:  "warn",
-			Message: "Cannot reach external APIs (cloud AI features may not work)",
-		}
-	}
-	defer resp.Body.Close()
-
-	return CheckResult{
-		Name:    "Network",
-		Status:  "ok",
-		Message: "External APIs reachable",
-	}
-}
-
-// ── Internal helpers ─────────────────────────────────────────────────────────
-
-func findProjectRoot() string {
-	dir, _ := os.Getwd()
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
-	}
-	return ""
-}
-
-func getDockerComposeCmd() (string, []string) {
-	if err := exec.Command("docker", "compose", "version").Run(); err == nil {
-		return "docker", []string{"compose"}
-	}
-	if _, err := exec.LookPath("docker-compose"); err == nil {
-		return "docker-compose", []string{}
-	}
-	return "docker", []string{"compose"}
-}
-
-// pullOllamaModel pulls a model via Ollama's HTTP API so doctor --fix works
-// even when the `ollama` CLI is not on PATH (e.g. Ollama running in Docker).
-func pullOllamaModel(cfg *config.Config, model string) error {
-	provider := llm.NewOllamaProvider(cfg)
-	if provider == nil {
-		return fmt.Errorf("cannot initialise Ollama provider")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-	defer cancel()
-	fmt.Fprintf(os.Stderr, "Pulling %s via Ollama API (this may take several minutes)…\n", model)
-	return provider.PullModel(ctx, model)
-}
-
-func runDockerCompose(composeFile string, args ...string) error {
-	bin, prefix := getDockerComposeCmd()
-	cmdArgs := append(prefix, "-f", composeFile)
-	cmdArgs = append(cmdArgs, args...)
-	cmd := exec.Command(bin, cmdArgs...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
 }

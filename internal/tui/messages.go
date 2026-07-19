@@ -1,26 +1,19 @@
 package tui
 
 import (
-	"database/sql"
-
 	"dev-cli/internal/infra"
 	"dev-cli/internal/storage"
 )
 
-type dockerHealthMsg struct {
-	health infra.DockerHealth
-}
+type dockerHealthMsg struct{ health infra.DockerHealth }
 
-type gpuStatsMsg struct {
-	stats infra.GPUStats
-}
-
-type serviceHealthMsg struct {
-	services []infra.ServiceStatus
+type containerLogsMsg struct {
+	containerID string
+	lines       []string
+	err         error
 }
 
 type historyLoadedMsg struct {
 	history []storage.HistoryItem
-	db      *sql.DB
 	err     error
 }

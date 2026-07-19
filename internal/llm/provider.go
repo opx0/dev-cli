@@ -106,33 +106,3 @@ func AssistantMsg(content string, toolCalls ...ToolCall) Message {
 func ToolResultMsg(toolCallID string, content string) Message {
 	return Message{Role: "tool", Content: content, ToolCallID: toolCallID}
 }
-
-// ── Tool Definition Conversion ───────────────────────────────────────────────
-
-// ProviderToolDefToToolDef converts a tools.ProviderToolDef to llm.ToolDef.
-// This bridges the tools package to the llm package without circular imports.
-func ProviderToolDefToToolDef(name, description string, params map[string]any) ToolDef {
-	return ToolDef{
-		Name:        name,
-		Description: description,
-		Parameters:  params,
-	}
-}
-
-// ProviderToolDefsToToolDefs converts a slice of tool definitions.
-// This accepts the generic struct fields to avoid importing tools package.
-func ProviderToolDefsToToolDefs(defs []struct {
-	Name        string
-	Description string
-	Parameters  map[string]any
-}) []ToolDef {
-	result := make([]ToolDef, len(defs))
-	for i, d := range defs {
-		result[i] = ToolDef{
-			Name:        d.Name,
-			Description: d.Description,
-			Parameters:  d.Parameters,
-		}
-	}
-	return result
-}

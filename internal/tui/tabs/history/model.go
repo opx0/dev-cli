@@ -71,7 +71,7 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 			Render(line)
 	}
 
-	fmt.Fprint(w, line)
+	_, _ = fmt.Fprint(w, line)
 }
 
 type Model struct {
@@ -105,6 +105,22 @@ func New() Model {
 func (m Model) SetSize(w, h int) Model {
 	m.width = w
 	m.height = h
+	if w < 70 {
+		panelWidth := w - 4
+		if panelWidth < 10 {
+			panelWidth = 10
+		}
+		panelHeight := h - 4
+		if panelHeight < 5 {
+			panelHeight = 5
+		}
+		m.list.SetWidth(panelWidth - 2)
+		m.list.SetHeight(panelHeight - 4)
+		m.viewport.Width = panelWidth - 4
+		m.viewport.Height = panelHeight - 4
+		m.updateDetailsContent()
+		return m
+	}
 
 	sidebarWidth := 40
 	if w < 100 {
@@ -130,11 +146,6 @@ func (m Model) SetSize(w, h int) Model {
 	m.viewport.Height = panelHeight - 4
 
 	m.updateDetailsContent()
-	return m
-}
-
-func (m Model) SetFocus(f FocusPanel) Model {
-	m.focus = f
 	return m
 }
 
@@ -196,38 +207,3 @@ func (m Model) formatDetails(item storage.HistoryItem) string {
 	}
 	return b.String()
 }
-
-func (m Model) Focus() FocusPanel { return m.focus }
-
-func (m Model) Cursor() int { return m.list.Index() }
-
-func (m Model) History() []storage.HistoryItem { return m.history }
-
-func (m Model) HistoryCount() int { return len(m.history) }
-
-func (m Model) SelectedItem() *storage.HistoryItem {
-	if sel := m.list.SelectedItem(); sel != nil {
-		if item, ok := sel.(historyItem); ok {
-			return &item.HistoryItem
-		}
-	}
-	return nil
-}
-
-func (m Model) Viewport() viewport.Model { return m.viewport }
-
-func (m Model) SetViewport(vp viewport.Model) Model {
-	m.viewport = vp
-	return m
-}
-
-func (m Model) List() list.Model { return m.list }
-
-func (m Model) SetList(l list.Model) Model {
-	m.list = l
-	return m
-}
-
-func (m Model) Width() int { return m.width }
-
-func (m Model) Height() int { return m.height }

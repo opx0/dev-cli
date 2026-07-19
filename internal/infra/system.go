@@ -1,59 +1,16 @@
 package infra
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
 	"os/exec"
-	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
 	"time"
 )
-
-// --- Service checks ---
-
-type ServiceStatus struct {
-	Name      string
-	Port      int
-	Available bool
-	Error     error
-}
-
-func CheckServices() []ServiceStatus {
-	services := []struct {
-		name string
-		port int
-	}{
-		{"Postgres", 5432},
-		{"Redis", 6379},
-		{"Ollama", 11434},
-	}
-
-	var results []ServiceStatus
-
-	for _, s := range services {
-		conn, err := net.DialTimeout("tcp", fmt.Sprintf("localhost:%d", s.port), 500*time.Millisecond)
-		status := ServiceStatus{
-			Name: s.name,
-			Port: s.port,
-		}
-
-		if err != nil {
-			status.Available = false
-			status.Error = err
-		} else {
-			status.Available = true
-			conn.Close()
-		}
-		results = append(results, status)
-	}
-
-	return results
-}
-
-// --- Port utilities ---
 
 type PortConflict struct {
 	Port      int
@@ -62,152 +19,50 @@ type PortConflict struct {
 	Suggested int
 }
 
-func CheckPortAvailable(port int) *PortConflict {
-	addr := fmt.Sprintf("localhost:%d", port)
-	conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+func CheckPortAvailable(ctx context.Context, port int) *PortConflict {
+	dialer := net.Dialer{Timeout: 200 * time.Millisecond}
+	conn, err := dialer.DialContext(ctx, "tcp", fmt.Sprintf("localhost:%d", port))
 	if err != nil {
 		return nil
 	}
-	conn.Close()
-
-	pid, process, _ := GetProcessOnPort(port)
-
-	return &PortConflict{
-		Port:      port,
-		Process:   process,
-		PID:       pid,
-		Suggested: FindAvailablePort(port + 1),
-	}
+	_ = conn.Close()
+	pid, process, _ := GetProcessOnPort(ctx, port)
+	return &PortConflict{Port: port, Process: process, PID: pid, Suggested: FindAvailablePort(ctx, port+1)}
 }
 
-func FindAvailablePort(basePort int) int {
+func FindAvailablePort(ctx context.Context, basePort int) int {
+	listenConfig := net.ListenConfig{}
 	for port := basePort; port < basePort+100; port++ {
-		ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+		listener, err := listenConfig.Listen(ctx, "tcp", fmt.Sprintf(":%d", port))
 		if err == nil {
-			ln.Close()
+			_ = listener.Close()
 			return port
 		}
 	}
 	return 0
 }
 
-func GetProcessOnPort(port int) (pid int, process string, err error) {
-	cmd := exec.Command("lsof", "-i", fmt.Sprintf(":%d", port), "-t")
-	output, err := cmd.Output()
+func GetProcessOnPort(ctx context.Context, port int) (pid int, process string, err error) {
+	// #nosec G204 -- port is validated as 1..65535 by the caller and is one argument.
+	output, err := exec.CommandContext(ctx, "lsof", "-i", fmt.Sprintf(":%d", port), "-t").Output()
 	if err != nil {
 		return 0, "", err
 	}
-
-	pidStr := strings.TrimSpace(string(output))
-	lines := strings.Split(pidStr, "\n")
-	if len(lines) == 0 || lines[0] == "" {
-		return 0, "", fmt.Errorf("no process found")
-	}
-
-	pid, err = strconv.Atoi(lines[0])
+	line := strings.Split(strings.TrimSpace(string(output)), "\n")[0]
+	pid, err = strconv.Atoi(line)
 	if err != nil {
 		return 0, "", err
 	}
-
 	if runtime.GOOS == "linux" {
-		cmdline, err := os.ReadFile(fmt.Sprintf("/proc/%d/comm", pid))
-		if err == nil {
-			process = strings.TrimSpace(string(cmdline))
+		if command, readErr := os.ReadFile(fmt.Sprintf("/proc/%d/comm", pid)); readErr == nil {
+			process = strings.TrimSpace(string(command))
 		}
 	} else {
-		psCmd := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "comm=")
-		psOutput, err := psCmd.Output()
-		if err == nil {
-			process = strings.TrimSpace(string(psOutput))
+		// #nosec G204 -- pid was parsed as an integer from lsof output.
+		command, commandErr := exec.CommandContext(ctx, "ps", "-p", strconv.Itoa(pid), "-o", "comm=").Output()
+		if commandErr == nil {
+			process = strings.TrimSpace(string(command))
 		}
 	}
-
 	return pid, process, nil
-}
-
-// --- Starship prompt integration ---
-
-type StarshipPrompt struct {
-	Available bool
-	Raw       string
-	Clean     string
-	Segments  []string
-}
-
-func GetStarshipPrompt() StarshipPrompt {
-	prompt := StarshipPrompt{}
-
-	path, err := exec.LookPath("starship")
-	if err != nil || path == "" {
-		return prompt
-	}
-	prompt.Available = true
-
-	cmd := exec.Command("starship", "prompt")
-	cmd.Env = os.Environ()
-
-	out, err := cmd.Output()
-	if err != nil {
-		return prompt
-	}
-
-	prompt.Raw = string(out)
-	prompt.Clean = stripANSI(prompt.Raw)
-	prompt.Segments = parseStarshipSegments(prompt.Clean)
-
-	return prompt
-}
-
-func stripANSI(s string) string {
-	re := regexp.MustCompile(`\x1b\[[0-9;]*m|%\{[^}]*\}`)
-	clean := re.ReplaceAllString(s, "")
-	clean = strings.Join(strings.Fields(clean), " ")
-	return strings.TrimSpace(clean)
-}
-
-func parseStarshipSegments(clean string) []string {
-	separators := []string{" on ", " in ", " via ", " is ", " took "}
-
-	parts := []string{clean}
-	for _, sep := range separators {
-		var newParts []string
-		for _, part := range parts {
-			split := strings.Split(part, sep)
-			for i, s := range split {
-				s = strings.TrimSpace(s)
-				if s != "" {
-					if i > 0 {
-						newParts = append(newParts, sep[1:len(sep)-1]+" "+s)
-					} else {
-						newParts = append(newParts, s)
-					}
-				}
-			}
-		}
-		parts = newParts
-	}
-
-	var filtered []string
-	for _, p := range parts {
-		p = strings.TrimLeft(p, "❯> ")
-		p = strings.TrimSpace(p)
-		if p != "" && p != "❯" && p != ">" {
-			filtered = append(filtered, p)
-		}
-	}
-
-	return filtered
-}
-
-func GetStarshipStatusLine() string {
-	prompt := GetStarshipPrompt()
-	if !prompt.Available {
-		return ""
-	}
-
-	line := prompt.Clean
-	line = strings.TrimRight(line, "❯> \n\r")
-	line = strings.TrimSpace(line)
-
-	return line
 }

@@ -12,24 +12,18 @@ type Registry struct {
 	tools map[string]Tool
 }
 
-var (
-	globalRegistry     *Registry
-	globalRegistryOnce sync.Once
-)
-
-// GetRegistry returns the global tool registry singleton.
-func GetRegistry() *Registry {
-	globalRegistryOnce.Do(func() {
-		globalRegistry = NewRegistry()
-	})
-	return globalRegistry
-}
-
 // NewRegistry creates a new tool registry.
 func NewRegistry() *Registry {
 	return &Registry{
 		tools: make(map[string]Tool),
 	}
+}
+
+// NewDefaultRegistry returns a fresh registry containing the standard RCA tools.
+func NewDefaultRegistry() *Registry {
+	r := NewRegistry()
+	r.RegisterDefaults()
+	return r
 }
 
 // Register adds a tool to the registry.
@@ -101,16 +95,6 @@ func (r *Registry) Count() int {
 	return len(r.tools)
 }
 
-// RegisterAll registers multiple tools.
-func (r *Registry) RegisterAll(tools ...Tool) error {
-	for _, tool := range tools {
-		if err := r.Register(tool); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // RegisterDefaults registers all default tools.
 // Call this to populate the registry with standard RCA tools.
 func (r *Registry) RegisterDefaults() {
@@ -123,7 +107,6 @@ func (r *Registry) RegisterDefaults() {
 	r.MustRegister(&CheckPortsTool{})
 	r.MustRegister(&GitInfoTool{})
 	r.MustRegister(&PackageInfoTool{})
-	r.MustRegister(&GitInspectorTool{})
 	r.MustRegister(&ReadDiffTool{})
 }
 
@@ -137,16 +120,4 @@ func (r *Registry) GetSchemas() []ToolSchema {
 		tools = append(tools, tool)
 	}
 	return GenerateToolsSchema(tools)
-}
-
-// GetSchemasJSON returns JSON string of all tool schemas for LLM prompts.
-func (r *Registry) GetSchemasJSON() (string, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	tools := make([]Tool, 0, len(r.tools))
-	for _, tool := range r.tools {
-		tools = append(tools, tool)
-	}
-	return ToolsPromptJSON(tools)
 }

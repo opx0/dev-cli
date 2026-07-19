@@ -280,6 +280,27 @@ func TestPrepareForLLM(t *testing.T) {
 	}
 }
 
+func TestSanitizeCloudRequest(t *testing.T) {
+	req := ChatRequest{Messages: []Message{{
+		Role:    "tool",
+		Content: "API_KEY=abcdefghijklmnopqrstuv",
+		ToolCalls: []ToolCall{{
+			Arguments: `{"token":"abcdefghijklmnopqrstuv"}`,
+		}},
+	}}}
+
+	got := sanitizeCloudRequest(req)
+	if strings.Contains(got.Messages[0].Content, "abcdefghijklmnopqrstuv") {
+		t.Fatal("message secret was not redacted")
+	}
+	if strings.Contains(got.Messages[0].ToolCalls[0].Arguments, "abcdefghijklmnopqrstuv") {
+		t.Fatal("tool-call secret was not redacted")
+	}
+	if !strings.Contains(req.Messages[0].Content, "abcdefghijklmnopqrstuv") {
+		t.Fatal("sanitization mutated the caller request")
+	}
+}
+
 func TestMaskEnvVars(t *testing.T) {
 	tests := []struct {
 		input string

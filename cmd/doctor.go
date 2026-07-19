@@ -12,38 +12,32 @@ import (
 )
 
 var (
-	doctorFix   bool
 	doctorQuiet bool
 	doctorJSON  bool
 )
 
 var doctorCmd = &cobra.Command{
 	Use:   "doctor",
-	Short: "Check system health and fix issues",
-	Long: `Run health checks on all dev-cli dependencies and optionally fix issues.
+	Short: "Check system health and dependencies",
+	Long: `Run read-only health checks on all dev-cli dependencies.
 
 Checks:
-  - Docker daemon status
-  - Ollama availability  
-  - GPU/CUDA support
-  - Required directories
-  - Network connectivity`,
-	Example: `  # Run health checks
-  dev-cli doctor
-
-  # Auto-fix issues where possible
-  dev-cli doctor --fix`,
-	Run: runDoctor,
+  - Optional Docker daemon status
+  - Local Ollama and configured model
+  - Available LLM provider
+  - Local data directory`,
+	Example: `  dev-cli doctor
+  dev-cli doctor --json`,
+	RunE: runDoctor,
 }
 
 func init() {
 	rootCmd.AddCommand(doctorCmd)
-	doctorCmd.Flags().BoolVar(&doctorFix, "fix", false, "Attempt to auto-fix issues")
 	doctorCmd.Flags().BoolVar(&doctorQuiet, "quiet", false, "Only show failures")
 	doctorCmd.Flags().BoolVar(&doctorJSON, "json", false, "Output results as JSON for agent consumption")
 }
 
-func runDoctor(cmd *cobra.Command, args []string) {
+func runDoctor(cmd *cobra.Command, args []string) error {
 	checks := health.AllChecks()
 
 	var failed, warned, passed int
@@ -53,12 +47,7 @@ func runDoctor(cmd *cobra.Command, args []string) {
 		result := check()
 
 		if doctorJSON {
-			jsonResults = append(jsonResults, health.CheckResultJSON{
-				Name:    result.Name,
-				Status:  result.Status,
-				Message: result.Message,
-				FixCmd:  result.FixCmd,
-			})
+			jsonResults = append(jsonResults, health.CheckResultJSON(result))
 		}
 
 		switch result.Status {
@@ -74,7 +63,7 @@ func runDoctor(cmd *cobra.Command, args []string) {
 			continue
 		}
 
-		if doctorQuiet && result.Status == "ok" {
+		if doctorQuiet && result.Status != "fail" {
 			continue
 		}
 
@@ -82,19 +71,8 @@ func runDoctor(cmd *cobra.Command, args []string) {
 		fmt.Printf("%s %s\n", icon, fmtBold(result.Name))
 		fmt.Printf("   %s\n", result.Message)
 
-		if result.Status == "fail" {
-			if doctorFix && (result.FixCmd != "" || result.FixFunc != nil) {
-				fmt.Printf("   %s Attempting fix...%s\n", colorYellow, colorReset)
-				if err := health.AttemptFix(result); err != nil {
-					fmt.Printf("   %s Fix failed: %v%s\n", colorRed, err, colorReset)
-				} else {
-					printSuccess("Fixed!")
-					failed--
-					passed++
-				}
-			} else if result.FixCmd != "" {
-				fmt.Printf("   %sFix: %s%s\n", colorCyan, result.FixCmd, colorReset)
-			}
+		if result.FixCmd != "" {
+			fmt.Printf("   %sRecommendation: %s%s\n", colorCyan, result.FixCmd, colorReset)
 		}
 		fmt.Println()
 	}
@@ -114,9 +92,9 @@ func runDoctor(cmd *cobra.Command, args []string) {
 		enc.SetIndent("", "  ")
 		_ = enc.Encode(report)
 		if failed > 0 {
-			os.Exit(1)
+			return fmt.Errorf("doctor found %d failed check(s)", failed)
 		}
-		return
+		return nil
 	}
 
 	fmt.Println(fmtBold("dev-cli doctor"))
@@ -130,8 +108,8 @@ func runDoctor(cmd *cobra.Command, args []string) {
 	}
 	fmt.Println()
 
-	if failed > 0 && !doctorFix {
-		fmt.Printf("\n%sRun 'dev-cli doctor --fix' to attempt auto-fixes%s\n", colorYellow, colorReset)
-		os.Exit(1)
+	if failed > 0 {
+		return fmt.Errorf("doctor found %d failed check(s)", failed)
 	}
+	return nil
 }

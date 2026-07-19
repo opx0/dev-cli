@@ -49,8 +49,11 @@ func (t *RunCommandTool) Execute(ctx context.Context, params map[string]any) Too
 	}
 
 	timeout := GetDuration(params, "timeout", 60*time.Second)
+	cwd := GetString(params, "cwd", "")
+	execCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 
-	result := executor.ExecuteWithTimeout(command, timeout)
+	result := executor.ExecuteWithContextInDir(execCtx, command, cwd)
 
 	return NewResult(CommandResult{
 		Command:  result.Command,

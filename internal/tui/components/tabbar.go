@@ -9,12 +9,9 @@ import (
 )
 
 type TabBar struct {
-	Tabs       []TabItem
-	ActiveTab  int
-	Width      int
-	ShowMode   bool
-	InsertMode bool
-	Badges     map[int]int
+	Tabs      []TabItem
+	ActiveTab int
+	Width     int
 }
 
 type TabItem struct {
@@ -23,10 +20,7 @@ type TabItem struct {
 }
 
 func NewTabBar(tabs []TabItem) TabBar {
-	return TabBar{
-		Tabs:   tabs,
-		Badges: make(map[int]int),
-	}
+	return TabBar{Tabs: tabs}
 }
 
 func (t TabBar) SetActive(idx int) TabBar {
@@ -38,20 +32,6 @@ func (t TabBar) SetActive(idx int) TabBar {
 
 func (t TabBar) SetWidth(w int) TabBar {
 	t.Width = w
-	return t
-}
-
-func (t TabBar) SetInsertMode(insert bool) TabBar {
-	t.InsertMode = insert
-	t.ShowMode = true
-	return t
-}
-
-func (t TabBar) SetBadge(tabIdx, count int) TabBar {
-	if t.Badges == nil {
-		t.Badges = make(map[int]int)
-	}
-	t.Badges[tabIdx] = count
 	return t
 }
 
@@ -68,31 +48,14 @@ func (t TabBar) Render() string {
 
 		content := tab.Icon + " " + tab.Label
 
-		if count, ok := t.Badges[i]; ok && count > 0 {
-			badgeStyle := lipgloss.NewStyle().
-				Foreground(theme.Crust).
-				Background(theme.Red).
-				Bold(true)
-			content += " " + badgeStyle.Render(strings.Repeat("•", min(count, 3)))
-		}
-
 		renderedTabs = append(renderedTabs, style.Render(content))
 	}
 
 	separator := lipgloss.NewStyle().Foreground(theme.Surface2).Render("│")
 	row := strings.Join(renderedTabs, separator)
 
-	modeStr := ""
-	if t.ShowMode {
-		if t.InsertMode {
-			modeStr = theme.ModeIndicator.Render(" INSERT ")
-		} else {
-			modeStr = theme.NormalModeIndicator.Render(" NORMAL ")
-		}
-	}
-
 	spacer := ""
-	spacerWidth := t.Width - lipgloss.Width(row) - lipgloss.Width(modeStr) - 2
+	spacerWidth := t.Width - lipgloss.Width(row) - 2
 	if spacerWidth > 0 {
 		spacer = strings.Repeat(" ", spacerWidth)
 	}
@@ -101,12 +64,5 @@ func (t TabBar) Render() string {
 		Background(theme.Mantle).
 		Width(t.Width)
 
-	return barStyle.Render(row + spacer + modeStr)
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
+	return barStyle.Render(row + spacer)
 }

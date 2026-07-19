@@ -30,9 +30,6 @@ func TestPerplexityConfig(t *testing.T) {
 		t.Fatal("expected provider to be non-nil")
 	}
 
-	if provider.apiKey != "test-key" {
-		t.Errorf("expected apiKey to be 'test-key', got '%s'", provider.apiKey)
-	}
 	if provider.model != "sonar-pro" {
 		t.Errorf("expected model to be 'sonar-pro', got '%s'", provider.model)
 	}

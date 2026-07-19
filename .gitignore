@@ -1,7 +1,5 @@
 # Binaries
 dev-cli
-dev-mcp
-mcp
 *.exe
 
 # Test artifacts

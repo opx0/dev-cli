@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -46,11 +45,6 @@ type Solution struct {
 type ResearchResult struct {
 	Query     string     `json:"query"`
 	Solutions []Solution `json:"solutions"`
-}
-
-type LogAnalysisResult struct {
-	Explanation string `json:"explanation"`
-	Fix         string `json:"fix"`
 }
 
 // ── Response Cache ───────────────────────────────────────────────────────────
@@ -132,19 +126,6 @@ func (c *ResponseCache) moveToEnd(key string) {
 	}
 }
 
-func (c *ResponseCache) Stats() (size int, capacity int) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return len(c.entries), c.maxSize
-}
-
-func (c *ResponseCache) Clear() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.entries = make(map[string]cacheEntry)
-	c.keys = make([]string, 0)
-}
-
 // ── HybridClient ─────────────────────────────────────────────────────────────
 
 // HybridClient routes requests between local (Ollama) and cloud (OpenAI-compatible,
@@ -199,16 +180,6 @@ func (h *HybridClient) Name() string {
 	return "hybrid"
 }
 
-// LocalProvider returns the Ollama provider for direct access.
-func (h *HybridClient) LocalProvider() *OllamaProvider {
-	return h.ollama
-}
-
-// CloudProvider returns the Perplexity provider (may be nil).
-func (h *HybridClient) CloudProvider() *PerplexityProvider {
-	return h.perplexity
-}
-
 func (h *HybridClient) Research(query string) (*ResearchResult, error) {
 	if cached, ok := h.cache.Get(query); ok {
 		return cached, nil
@@ -234,33 +205,6 @@ func (h *HybridClient) Research(query string) (*ResearchResult, error) {
 
 func (h *HybridClient) HasPerplexity() bool {
 	return h.perplexity != nil
-}
-
-func (h *HybridClient) CacheStats() (size int, capacity int) {
-	return h.cache.Stats()
-}
-
-func (h *HybridClient) ClearCache() {
-	h.cache.Clear()
-}
-
-func (h *HybridClient) AnalyzeLog(logLines string, aiMode string) (*LogAnalysisResult, error) {
-	if os.Getenv("DEV_CLI_FORCE_LOCAL") != "" || aiMode == "local" {
-		return h.ollama.AnalyzeLog(logLines)
-	}
-
-	if aiMode == "cloud" {
-		if h.perplexity != nil {
-			return h.perplexity.AnalyzeLog(context.Background(), logLines)
-		}
-		return nil, fmt.Errorf("cloud AI requested but PERPLEXITY_API_KEY is not set")
-	}
-
-	return h.ollama.AnalyzeLog(logLines)
-}
-
-func (h *HybridClient) Solve(goal string) (string, error) {
-	return h.ollama.Solve(goal)
 }
 
 // SelectAgentModel returns the (provider, model) pair that an agent loop

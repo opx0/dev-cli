@@ -1,69 +1,43 @@
 # AGENTS.md
 
-> Quick context for AI agents. Full context at `.context/AGENT_CONTEXT.md`
+## Product boundary
 
-## Project: dev-cli
+`dev-cli` is a safety-first DevOps terminal companion. Its core is failure investigation, deterministic evidence collection, optional AI explanation, approved remediation, and outcome review.
 
-AI-powered DevOps terminal companion with **safe mode** as the #1 priority.
+Core commands: `ask`, `explain`, `fix`, `doctor`, `ui`, `config`, `models`, and `version`.
 
-## Current State
+Do not reintroduce workflow automation, runbooks, memory systems, PR/review/generation helpers, an MCP server, or a broad infrastructure dashboard without explicit product validation.
 
-**Completed:**
-- Feature validation research (HN, competitors)
-- Killed: `watch`, `workflow` commands
-- Safe Mode Hardening: 75+ dangerous patterns, 50+ sensitive file patterns
-- Added `--dry-run` flag to `fix` command
-- All tests passing
+## Safety rules
 
-**Next:** Phase 1.3 - Local-First Excellence (Ollama improvements)
+Before file access or command execution, use the shared checks:
 
-## Key Commands
-
-```bash
-dev-cli fix "issue"        # Autonomous agent
-dev-cli fix --dry-run "x"  # Preview mode (safe)
-dev-cli explain            # Root cause analysis
-dev-cli ask "topic"        # AI research
-dev-cli ui                 # Interactive TUI
-```
-
-## Safety (CRITICAL)
-
-**Before any file/command operation, check safety:**
 ```go
-// For files
-check := executor.CheckFileSafety(path)
-if !check.IsSafe { /* block */ }
-
-// For commands
-check := executor.CheckCommandSafety(cmd)
-if !check.IsSafe { /* block */ }
+fileCheck := executor.CheckFileSafety(path)
+commandCheck := executor.CheckCommandSafety(command)
 ```
 
-**Key files:**
-- `internal/executor/safety.go` - All safety patterns
-- `internal/tools/file_tools.go` - File operations with safety
-- `internal/tools/command_tools.go` - Command execution with safety
+- Resolve symlinks before enforcing path scope.
+- New or unclassified agent tools must fail closed and require approval.
+- Dry-run may gather evidence but must never mutate state.
+- Cloud requests must pass through request sanitization.
+- Never expose Docker environment values or persist unsanitized command output.
+- Extend the existing approval path; do not add a parallel safety system.
 
-## Feature Decisions
+Key files:
 
-| Decision | Features |
-|----------|----------|
-| **KILLED** | `watch`, `workflow`, templates |
-| **DEFERRED** | MCP server |
-| **CORE** | safe mode, explain, fix, ask, hybrid LLM |
+- `internal/executor/safety.go`
+- `internal/llm/agent.go`
+- `internal/llm/sanitizer.go`
+- `internal/tools/file_tools.go`
+- `internal/tools/command_tools.go`
 
-## Build & Test
+## Development
 
 ```bash
-go build ./...  # Must pass
-go test ./...   # Must pass
+make install-lint
+make check
+make build
 ```
 
-## Full Context
-
-Read `.context/AGENT_CONTEXT.md` for:
-- Complete progress history
-- All safety patterns
-- Full roadmap
-- Coding guidelines
+Keep the command tree and TUI small. Prefer deleting an obsolete abstraction over preserving speculative compatibility. Do not mutate unrelated user work.

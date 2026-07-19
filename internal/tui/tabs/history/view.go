@@ -9,6 +9,20 @@ import (
 )
 
 func (m Model) View() string {
+	panelHeight := m.height - 4
+	if panelHeight < 5 {
+		panelHeight = 5
+	}
+	if m.width < 70 {
+		width := m.width - 4
+		if width < 10 {
+			width = 10
+		}
+		if m.focus == FocusMain {
+			return m.renderDetailsPanel(width, panelHeight)
+		}
+		return m.renderHistoryList(width, panelHeight)
+	}
 
 	sidebarWidth := 40
 	if m.width < 100 {
@@ -19,8 +33,6 @@ func (m Model) View() string {
 	}
 
 	detailsWidth := m.width - sidebarWidth - 4
-	panelHeight := m.height - 4
-
 	if detailsWidth < 30 {
 		detailsWidth = 30
 	}

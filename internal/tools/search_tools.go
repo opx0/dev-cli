@@ -3,10 +3,13 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os/exec"
 	"strconv"
 	"strings"
 	"time"
+
+	"dev-cli/internal/executor"
 )
 
 // SearchCodebaseTool searches for patterns in code using ripgrep.
@@ -51,10 +54,26 @@ func (t *SearchCodebaseTool) Execute(ctx context.Context, params map[string]any)
 		return NewErrorResult("pattern is required", time.Since(start))
 	}
 
-	searchPath := GetString(params, "path", ".")
+	searchPath, err := executor.ResolvePath(GetString(params, "path", "."))
+	if err != nil {
+		return NewErrorResult(fmt.Sprintf("invalid path: %v", err), time.Since(start))
+	}
+	if check := executor.CheckFileSafety(searchPath); !check.IsSafe {
+		return NewErrorResult(fmt.Sprintf("BLOCKED: %s (matched: %s)", check.Reason, check.MatchedRule), time.Since(start))
+	}
 	ignoreCase := GetBool(params, "ignore_case", false)
 	maxResults := GetInt(params, "max_results", 50)
+	if maxResults < 1 {
+		maxResults = 1
+	} else if maxResults > 500 {
+		maxResults = 500
+	}
 	contextLines := GetInt(params, "context_lines", 0)
+	if contextLines < 0 {
+		contextLines = 0
+	} else if contextLines > 20 {
+		contextLines = 20
+	}
 	fileTypes := GetStringSlice(params, "file_types")
 
 	if _, err := exec.LookPath("rg"); err != nil {
@@ -79,12 +98,13 @@ func (t *SearchCodebaseTool) Execute(ctx context.Context, params map[string]any)
 		args = append(args, "-t", ft)
 	}
 
-	args = append(args, pattern, searchPath)
+	args = append(args, "--", pattern, searchPath)
 
+	// #nosec G204 -- arguments are passed directly; -- terminates option parsing before the pattern.
 	cmd := exec.CommandContext(ctx, "rg", args...)
 	output, _ := cmd.Output()
 
-	matches := parseRipgrepJSON(string(output))
+	matches := filterSafeMatches(parseRipgrepJSON(string(output)))
 
 	truncated := false
 	if len(matches) > maxResults {
@@ -108,7 +128,7 @@ func (t *SearchCodebaseTool) executeWithGrep(ctx context.Context, pattern, path 
 	if ignoreCase {
 		args = append(args, "-i")
 	}
-	args = append(args, pattern, path)
+	args = append(args, "--", pattern, path)
 
 	cmd := exec.CommandContext(ctx, "grep", args...)
 	output, _ := cmd.Output()
@@ -123,9 +143,13 @@ func (t *SearchCodebaseTool) executeWithGrep(ctx context.Context, pattern, path 
 
 		parts := strings.SplitN(line, ":", 3)
 		if len(parts) >= 3 {
+			resolved, err := executor.ResolvePath(parts[0])
+			if err != nil || !executor.CheckFileSafety(resolved).IsSafe {
+				continue
+			}
 			lineNum, _ := strconv.Atoi(parts[1])
 			matches = append(matches, SearchMatch{
-				File:    parts[0],
+				File:    resolved,
 				Line:    lineNum,
 				Content: parts[2],
 			})
@@ -142,6 +166,19 @@ func (t *SearchCodebaseTool) executeWithGrep(ctx context.Context, pattern, path 
 		TotalCount: len(matches),
 		Truncated:  len(lines) > maxResults,
 	}, time.Since(start))
+}
+
+func filterSafeMatches(matches []SearchMatch) []SearchMatch {
+	safe := matches[:0]
+	for _, match := range matches {
+		resolved, err := executor.ResolvePath(match.File)
+		if err != nil || !executor.CheckFileSafety(resolved).IsSafe {
+			continue
+		}
+		match.File = resolved
+		safe = append(safe, match)
+	}
+	return safe
 }
 
 func parseRipgrepJSON(output string) []SearchMatch {

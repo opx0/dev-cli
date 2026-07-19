@@ -11,336 +11,113 @@ import (
 )
 
 func (m Model) View() string {
-
-	sidebarWidth := 28
-	if m.width < 100 {
-		sidebarWidth = 24
+	if m.dockerUnavailable != "" {
+		return lipgloss.NewStyle().Foreground(theme.Yellow).Padding(1, 2).
+			Render("Docker unavailable: " + m.dockerUnavailable)
 	}
-
-	logWidth := m.width - sidebarWidth - 4
-	if logWidth < 40 {
-		logWidth = 40
+	width := m.width - 2
+	if width < 10 {
+		width = 10
 	}
-
-	panelHeight := m.height - 4
-
-	servicesHeight := (panelHeight - 8) / 2
-	imagesHeight := (panelHeight - 8) / 2
-	statsHeight := 6
-
-	if servicesHeight < 5 {
-		servicesHeight = 5
+	height := m.height - 2
+	if height < 6 {
+		height = 6
 	}
-	if imagesHeight < 5 {
-		imagesHeight = 5
+	if m.width < 70 {
+		servicesHeight := height / 3
+		return lipgloss.JoinVertical(lipgloss.Left,
+			m.renderServices(width, servicesHeight),
+			m.renderLogs(width, height-servicesHeight-1))
 	}
-
-	servicesPanel := m.renderServicesPanel(sidebarWidth, servicesHeight)
-	imagesPanel := m.renderImagesPanel(sidebarWidth, imagesHeight)
-	statsPanel := m.renderStatsPanel(sidebarWidth, statsHeight)
-
-	leftColumn := lipgloss.JoinVertical(lipgloss.Left, servicesPanel, imagesPanel, statsPanel)
-
-	logsPanel := m.renderLogsPanel(logWidth, panelHeight)
-
-	return lipgloss.JoinHorizontal(lipgloss.Top, leftColumn, logsPanel)
+	left := m.width / 3
+	return lipgloss.JoinHorizontal(lipgloss.Top,
+		m.renderServices(left, height),
+		m.renderLogs(m.width-left-2, height))
 }
 
-func (m Model) renderServicesPanel(width, height int) string {
-	borderColor := theme.Surface2
-	if m.focus == FocusServices {
-		borderColor = theme.Mauve
-	}
-
-	panelStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(borderColor).
-		Width(width).
-		Height(height).
-		MaxHeight(height)
-
-	headerStyle := lipgloss.NewStyle().
-		Foreground(theme.Lavender).
-		Bold(true)
-
-	countStyle := lipgloss.NewStyle().
-		Foreground(theme.Overlay0)
-
-	header := headerStyle.Render("⬢ Services")
-	if len(m.services) > 0 {
-		header += countStyle.Render(fmt.Sprintf(" [%d]", len(m.services)))
-	}
-
+func (m Model) renderServices(width, height int) string {
 	var content strings.Builder
-	content.WriteString(header + "\n")
-
-	switch {
-	case m.dockerUnavailable != "":
-		msg := lipgloss.NewStyle().
-			Foreground(theme.Red).
-			Render(m.dockerUnavailable)
-		content.WriteString(msg)
-	case len(m.services) == 0:
-		noItems := lipgloss.NewStyle().
-			Foreground(theme.Overlay0).
-			Render("No services running")
-		content.WriteString(noItems)
-	default:
-		content.WriteString(m.servicesList.View())
+	content.WriteString(lipgloss.NewStyle().Foreground(theme.Lavender).Bold(true).Render("Containers"))
+	content.WriteByte('\n')
+	if len(m.services) == 0 {
+		content.WriteString(lipgloss.NewStyle().Foreground(theme.Overlay0).Render("No containers"))
 	}
-
-	return panelStyle.Render(content.String())
-}
-
-func (m Model) renderImagesPanel(width, height int) string {
-	borderColor := theme.Surface2
-	if m.focus == FocusImages {
-		borderColor = theme.Mauve
+	start, end := 0, len(m.services)
+	maxItems := height - 3
+	if maxItems < 1 {
+		maxItems = 1
 	}
-
-	panelStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(borderColor).
-		Width(width).
-		Height(height).
-		MaxHeight(height)
-
-	headerStyle := lipgloss.NewStyle().
-		Foreground(theme.Lavender).
-		Bold(true)
-
-	countStyle := lipgloss.NewStyle().
-		Foreground(theme.Overlay0)
-
-	header := headerStyle.Render("📦 Images")
-	if len(m.images) > 0 {
-		header += countStyle.Render(fmt.Sprintf(" [%d]", len(m.images)))
-	}
-
-	var content strings.Builder
-	content.WriteString(header + "\n")
-
-	if len(m.images) == 0 {
-		noItems := lipgloss.NewStyle().
-			Foreground(theme.Overlay0).
-			Render("No images")
-		content.WriteString(noItems)
-	} else {
-		content.WriteString(m.imagesList.View())
-	}
-
-	return panelStyle.Render(content.String())
-}
-
-func (m Model) renderStatsPanel(width, height int) string {
-	borderColor := theme.Surface2
-	if m.focus == FocusStats {
-		borderColor = theme.Mauve
-	}
-
-	panelStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(borderColor).
-		Width(width).
-		Height(height).
-		MaxHeight(height)
-
-	headerStyle := lipgloss.NewStyle().
-		Foreground(theme.Lavender).
-		Bold(true)
-
-	var content strings.Builder
-	content.WriteString(headerStyle.Render("▣ Stats") + "\n")
-
-	stats := m.GetSelectedServiceStats()
-	labelStyle := lipgloss.NewStyle().Foreground(theme.Overlay0).Width(4)
-
-	content.WriteString(labelStyle.Render("CPU "))
-	sparkWidth := width - 12
-	if sparkWidth < 5 {
-		sparkWidth = 5
-	}
-
-	if len(stats.CPUHistory) > 0 {
-		sparkline := components.NewSparkline(stats.CPUHistory, 100).
-			SetWidth(sparkWidth).
-			SetShowValue(true)
-		content.WriteString(sparkline.Render())
-	} else {
-		placeholder := lipgloss.NewStyle().Foreground(theme.Surface1).Render(strings.Repeat("░", sparkWidth))
-		content.WriteString(placeholder)
-	}
-	content.WriteString("\n")
-
-	content.WriteString(labelStyle.Render("MEM "))
-	if stats.MemTotal > 0 {
-		memBar := components.NewProgressBar(stats.MemUsed, stats.MemTotal).
-			SetWidth(sparkWidth)
-		content.WriteString(memBar.Render())
-	} else {
-		placeholder := lipgloss.NewStyle().Foreground(theme.Surface1).Render(strings.Repeat("░", sparkWidth))
-		content.WriteString(placeholder)
-	}
-	content.WriteString("\n")
-
-	content.WriteString(labelStyle.Render("NET "))
-	netStyle := lipgloss.NewStyle().Foreground(theme.Overlay0)
-	if stats.NetIn > 0 || stats.NetOut > 0 {
-		netStr := fmt.Sprintf("↑%s ↓%s", formatBytes(stats.NetOut), formatBytes(stats.NetIn))
-		content.WriteString(netStyle.Render(netStr))
-	} else {
-		content.WriteString(netStyle.Render("↑0B ↓0B"))
-	}
-
-	return panelStyle.Render(content.String())
-}
-
-func (m Model) renderLogsPanel(width, height int) string {
-	borderColor := theme.Surface2
-	if m.focus == FocusLogs {
-		borderColor = theme.Mauve
-	}
-
-	panelStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(borderColor).
-		Width(width).
-		Height(height).
-		MaxHeight(height).
-		MaxWidth(width)
-
-	headerStyle := lipgloss.NewStyle().
-		Foreground(theme.Lavender).
-		Bold(true)
-
-	dimStyle := lipgloss.NewStyle().
-		Foreground(theme.Overlay0)
-
-	header := headerStyle.Render("≡ Logs")
-
-	if svc := m.SelectedService(); svc != nil {
-		serviceName := svc.Name
-		if len(serviceName) > 15 {
-			serviceName = serviceName[:12] + "…"
+	if end > maxItems {
+		start = m.selected - maxItems/2
+		if start < 0 {
+			start = 0
 		}
-		header += dimStyle.Render(" (" + serviceName + ")")
+		end = start + maxItems
+		if end > len(m.services) {
+			end = len(m.services)
+			start = end - maxItems
+		}
 	}
-
-	if m.isRecording {
-		recBadge := lipgloss.NewStyle().
-			Background(theme.Red).
-			Foreground(theme.Crust).
-			Bold(true).
-			Padding(0, 1).
-			Render("REC")
-		header += " " + recBadge
+	for index := start; index < end; index++ {
+		service := m.services[index]
+		status, color := "○", theme.Red
+		if service.State == "running" {
+			status, color = "●", theme.Green
+		}
+		line := fmt.Sprintf("%s %s", lipgloss.NewStyle().Foreground(color).Render(status), service.Name)
+		if index == m.selected {
+			line = lipgloss.NewStyle().Background(theme.Surface1).Foreground(theme.Lavender).Bold(true).Width(width - 4).Render(line)
+		}
+		content.WriteString(line + "\n")
 	}
+	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(theme.Surface2).
+		Width(width).Height(height).Padding(0, 1).Render(strings.TrimRight(content.String(), "\n"))
+}
 
-	if m.followMode {
-		followBadge := lipgloss.NewStyle().
-			Background(theme.Green).
-			Foreground(theme.Crust).
-			Padding(0, 1).
-			Render("F")
-		header += " " + followBadge
+func (m Model) renderLogs(width, height int) string {
+	header := "Logs"
+	if selected := m.SelectedService(); selected != nil {
+		header += " (" + selected.Name + ")"
 	}
-
 	if m.logLevelFilter != "" {
-		filterBadge := lipgloss.NewStyle().
-			Background(theme.Surface0).
-			Foreground(theme.Text).
-			Padding(0, 1).
-			Render(m.logLevelFilter[:1])
-		header += " " + filterBadge
+		header += " [" + m.logLevelFilter + "]"
 	}
 
-	contentWidth := width - 6
-	if contentWidth < 20 {
-		contentWidth = 20
+	lines := m.filteredLogs()
+	maxLines := height - 3
+	if maxLines < 1 {
+		maxLines = 1
 	}
-
-	contentHeight := height - 4
-	if contentHeight < 5 {
-		contentHeight = 5
+	if len(lines) > maxLines {
+		lines = lines[len(lines)-maxLines:]
 	}
-
-	var displayLines []string
-	if len(m.logLines) > 0 {
-		filteredLines := m.filterLogLines()
-
-		startIdx := 0
-		if len(filteredLines) > contentHeight {
-			startIdx = len(filteredLines) - contentHeight
+	if len(lines) == 0 {
+		lines = []string{"No logs available"}
+	}
+	for i := range lines {
+		limit := width - 4
+		if limit > 1 && len([]rune(lines[i])) > limit {
+			lines[i] = string([]rune(lines[i])[:limit-1]) + "…"
 		}
-		visibleLines := filteredLines[startIdx:]
-
-		for _, line := range visibleLines {
-			truncatedLine := truncateLine(line, contentWidth)
-			logLine := components.NewLogLine(truncatedLine)
-			displayLines = append(displayLines, logLine.Render())
-		}
-	} else {
-		displayLines = append(displayLines, dimStyle.Render("No logs available"))
-		displayLines = append(displayLines, dimStyle.Render("Select a service to view logs"))
+		lines[i] = components.NewLogLine(lines[i]).Render()
 	}
-
-	var contentBuilder strings.Builder
-	contentBuilder.WriteString(header + "\n")
-	contentBuilder.WriteString(strings.Join(displayLines, "\n"))
-
-	return panelStyle.Render(contentBuilder.String())
+	content := lipgloss.NewStyle().Foreground(theme.Lavender).Bold(true).Render(header) + "\n" + strings.Join(lines, "\n")
+	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(theme.Surface2).
+		Width(width).Height(height).Padding(0, 1).Render(content)
 }
 
-func (m Model) filterLogLines() []string {
+func (m Model) filteredLogs() []string {
 	if m.logLevelFilter == "" {
-		return m.logLines
+		return append([]string(nil), m.logLines...)
 	}
-
-	var filtered []string
+	var lines []string
 	for _, line := range m.logLines {
-		upperLine := strings.ToUpper(line)
-		switch m.logLevelFilter {
-		case "ERROR":
-			if strings.Contains(upperLine, "ERROR") || strings.Contains(upperLine, "ERR") {
-				filtered = append(filtered, line)
-			}
-		case "WARN":
-			if strings.Contains(upperLine, "WARN") || strings.Contains(upperLine, "WARNING") ||
-				strings.Contains(upperLine, "ERROR") {
-				filtered = append(filtered, line)
-			}
-		case "INFO":
-			if strings.Contains(upperLine, "INFO") || strings.Contains(upperLine, "WARN") ||
-				strings.Contains(upperLine, "ERROR") {
-				filtered = append(filtered, line)
-			}
+		upper := strings.ToUpper(line)
+		if strings.Contains(upper, m.logLevelFilter) ||
+			(m.logLevelFilter == "WARN" && strings.Contains(upper, "ERROR")) ||
+			(m.logLevelFilter == "INFO" && (strings.Contains(upper, "WARN") || strings.Contains(upper, "ERROR"))) {
+			lines = append(lines, line)
 		}
 	}
-	return filtered
-}
-
-func truncateLine(line string, maxWidth int) string {
-	if maxWidth <= 0 {
-		return ""
-	}
-
-	runes := []rune(line)
-	if len(runes) <= maxWidth {
-		return line
-	}
-
-	return string(runes[:maxWidth-1]) + "…"
-}
-
-func formatBytes(b int64) string {
-	const unit = 1024
-	if b < unit {
-		return fmt.Sprintf("%dB", b)
-	}
-	div, exp := int64(unit), 0
-	for n := b / unit; n >= unit; n /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f%cB", float64(b)/float64(div), "KMGTPE"[exp])
+	return lines
 }

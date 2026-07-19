@@ -5,10 +5,6 @@ version: 2
 
 project_name: dev-cli
 
-before:
-  hooks:
-    - go mod tidy
-
 builds:
   - id: dev-cli
     main: ./main.go
@@ -30,31 +26,13 @@ builds:
       - -X main.version={{.Version}}
       - -X main.commit={{.ShortCommit}}
       - -X main.date={{.Date}}
-  - id: dev-mcp
-    main: ./cmd/mcp/
-    binary: dev-mcp
-    env:
-      - CGO_ENABLED=0
-    goos:
-      - linux
-      - darwin
-      - windows
-    goarch:
-      - amd64
-      - arm64
-    ignore:
-      - goos: windows
-        goarch: arm64
-    ldflags:
-      - -s -w
-
 archives:
   - id: default
-    format: tar.gz
+    formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     format_overrides:
       - goos: windows
-        format: zip
+        formats: [zip]
     files:
       - README.md
       - LICENSE
@@ -77,9 +55,6 @@ changelog:
       - Merge branch
 
 release:
-  github:
-    owner: opx0  # GitHub username/org
-    name: devops-agent-cli
   draft: false
   prerelease: auto
   name_template: "v{{ .Version }}"

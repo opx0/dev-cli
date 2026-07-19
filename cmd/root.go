@@ -32,8 +32,10 @@ func SetVersionInfo(v, c, d string) {
 }
 
 var rootCmd = &cobra.Command{
-	Use:   "dev-cli",
-	Short: "AI-powered terminal companion for developers",
+	Use:           "dev-cli",
+	Short:         "AI-powered terminal companion for developers",
+	SilenceErrors: true,
+	SilenceUsage:  true,
 	Long: `dev-cli is an AI-powered terminal companion for developers and DevOps engineers.
 It analyzes failures using LLMs and provides instant help with autonomous fixing.
 

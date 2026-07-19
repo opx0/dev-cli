@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 
 	"dev-cli/internal/tui"
 
@@ -13,21 +12,19 @@ import (
 var uiCmd = &cobra.Command{
 	Use:   "ui",
 	Short: "Open the interactive dashboard",
-	Long: `Launch the Terminal User Interface (TUI) - your Mission Control.
+	Long: `Launch the focused Terminal User Interface (TUI).
 
 Tabs:
-  Dashboard  - System status and metrics
-  Monitor    - Real-time log watching with AI
-  Assist     - Chat interface for asking questions
-  History    - Searchable command history
+  Containers - Container status and recent logs
+  History    - Recent command failures
 
 Navigation: Use Tab/Shift+Tab or number keys. Press 'q' to quit.`,
-	Run: func(cmd *cobra.Command, args []string) {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		p := tea.NewProgram(tui.InitialModel(), tea.WithAltScreen())
 		if _, err := p.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error running dashboard: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("run dashboard: %w", err)
 		}
+		return nil
 	},
 }
 

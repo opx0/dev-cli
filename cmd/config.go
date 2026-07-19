@@ -23,10 +23,10 @@ The config file is read at $DEV_CLI_CONFIG if set, else <LogDir>/config.yaml
     env vars > config file > defaults
 
 Available keys:
-  ollama.url, ollama.model, ollama.unload
+  ollama.url, ollama.model
   openai.api_key, openai.base_url, openai.model
   perplexity.api_key, perplexity.model
-  log_dir, log_format, force_local`,
+  log_dir, force_local`,
 }
 
 var configInitCmd = &cobra.Command{
@@ -49,7 +49,7 @@ var configInitCmd = &cobra.Command{
 			return err
 		}
 		fmt.Printf("%s Wrote default config to %s\n", iconOK(), path)
-		fmt.Printf("%s Edit and set e.g. openai.api_key: %s config set openai.api_key sk-…\n", iconInfo(), rootCmd.Use)
+		fmt.Printf("%s Edit the file or set credentials through environment variables.\n", iconInfo())
 		return nil
 	},
 }
@@ -68,7 +68,6 @@ var configShowCmd = &cobra.Command{
 		fmt.Println("ollama:")
 		fmt.Printf("  url:        %s\n", f.Ollama.URL)
 		fmt.Printf("  model:      %s\n", f.Ollama.Model)
-		fmt.Printf("  unload:     %t\n", f.Ollama.Unload)
 		fmt.Println("openai:")
 		fmt.Printf("  api_key:    %s\n", config.MaskKey(f.OpenAI.APIKey))
 		fmt.Printf("  base_url:   %s\n", f.OpenAI.BaseURL)
@@ -77,7 +76,6 @@ var configShowCmd = &cobra.Command{
 		fmt.Printf("  api_key:    %s\n", config.MaskKey(f.Perplexity.APIKey))
 		fmt.Printf("  model:      %s\n", f.Perplexity.Model)
 		fmt.Printf("log_dir:     %s\n", f.LogDir)
-		fmt.Printf("log_format:  %s\n", f.LogFormat)
 		fmt.Printf("force_local: %t\n", f.ForceLocal)
 		return nil
 	},
@@ -90,6 +88,9 @@ var configSetCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		key := strings.TrimSpace(args[0])
 		value := args[1]
+		if strings.HasSuffix(key, "api_key") {
+			return fmt.Errorf("refusing API key on the command line; edit %s or use an environment variable", config.Path())
+		}
 
 		f, _ := config.ReadFile()
 		if err := f.SetKey(key, value); err != nil {
@@ -119,6 +120,9 @@ var configGetCmd = &cobra.Command{
 		val, err := f.GetKey(args[0])
 		if err != nil {
 			return err
+		}
+		if strings.HasSuffix(args[0], "api_key") {
+			val = config.MaskKey(val)
 		}
 		fmt.Println(val)
 		return nil
